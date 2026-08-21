@@ -8,9 +8,11 @@
  */
 import type { CanvasDocument, GuestLink, InterviewSession, Participant, Role, User } from "./types";
 import { mockApi } from "./mock-backend";
+import { clearToken, getToken } from "./auth";
 
 const API_BASE = (import.meta.env["VITE_API_BASE_URL"] as string | undefined) ?? "";
-const USE_MOCK = (import.meta.env["VITE_USE_MOCK_API"] as string | undefined) !== "false" && !API_BASE;
+const USE_MOCK =
+  (import.meta.env["VITE_USE_MOCK_API"] as string | undefined) !== "false" && !API_BASE;
 
 export class ApiError extends Error {
   constructor(
@@ -23,15 +25,23 @@ export class ApiError extends Error {
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const token = getToken();
   const res = await fetch(`${API_BASE}${path}`, {
     method,
-    headers: { "content-type": "application/json" },
-    credentials: "include",
+    headers: {
+      "content-type": "application/json",
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   if (!res.ok) {
+    if (res.status === 401) clearToken();
     const payload = (await res.json().catch(() => ({}))) as { code?: string; message?: string };
-    throw new ApiError(res.status, payload.code ?? "unknown_error", payload.message ?? res.statusText);
+    throw new ApiError(
+      res.status,
+      payload.code ?? "unknown_error",
+      payload.message ?? res.statusText,
+    );
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
@@ -43,6 +53,12 @@ export const api = {
   /** POST /v1/auth/magic-link */
   requestMagicLink: (email: string): Promise<{ sent: boolean }> =>
     USE_MOCK ? mockApi.requestMagicLink(email) : request("POST", "/v1/auth/magic-link", { email }),
+
+  /** POST /v1/auth/login */
+  login: (email: string, password: string): Promise<{ access_token: string }> =>
+    USE_MOCK
+      ? mockApi.login(email, password)
+      : request("POST", "/v1/auth/login", { email, password }),
 
   /** GET /v1/me */
   me: (): Promise<User> => (USE_MOCK ? mockApi.me() : request("GET", "/v1/me")),
@@ -69,7 +85,12 @@ export const api = {
   /** PATCH /v1/sessions/{id} */
   updateSession: (
     id: string,
-    patch: Partial<Pick<InterviewSession, "title" | "prompt" | "candidate_editing_enabled" | "cursors_visible" | "state">>,
+    patch: Partial<
+      Pick<
+        InterviewSession,
+        "title" | "prompt" | "candidate_editing_enabled" | "cursors_visible" | "state"
+      >
+    >,
   ): Promise<InterviewSession> =>
     USE_MOCK ? mockApi.updateSession(id, patch) : request("PATCH", `/v1/sessions/${id}`, patch),
 
@@ -96,11 +117,15 @@ export const api = {
     id: string,
     input?: { role_granted?: Role; expires_at?: string | null; max_uses?: number | null },
   ): Promise<GuestLink> =>
-    USE_MOCK ? mockApi.createGuestLink(id, input) : request("POST", `/v1/sessions/${id}/guest-links`, input ?? {}),
+    USE_MOCK
+      ? mockApi.createGuestLink(id, input)
+      : request("POST", `/v1/sessions/${id}/guest-links`, input ?? {}),
 
   /** DELETE /v1/sessions/{id}/guest-links/{linkId} */
   revokeGuestLink: (id: string, linkId: string): Promise<void> =>
-    USE_MOCK ? mockApi.revokeGuestLink(id, linkId) : request("DELETE", `/v1/sessions/${id}/guest-links/${linkId}`),
+    USE_MOCK
+      ? mockApi.revokeGuestLink(id, linkId)
+      : request("DELETE", `/v1/sessions/${id}/guest-links/${linkId}`),
 
   /** GET /v1/sessions/{id}/guest-links */
   listGuestLinks: (id: string): Promise<GuestLink[]> =>
@@ -109,25 +134,34 @@ export const api = {
   /* ------------------------- Join ------------------------- */
 
   /** GET /v1/join/{token} — lobby preflight */
-  previewJoin: (token: string): Promise<{ session_title: string; joinable: boolean; reason?: string }> =>
+  previewJoin: (
+    token: string,
+  ): Promise<{ session_title: string; joinable: boolean; reason?: string }> =>
     USE_MOCK ? mockApi.previewJoin(token) : request("GET", `/v1/join/${token}`),
 
   /** POST /v1/join/{token} */
   join: (
     token: string,
     input: { display_name: string },
-  ): Promise<{ session: InterviewSession; participant: Participant; collaboration_token: string }> =>
-    USE_MOCK ? mockApi.join(token, input) : request("POST", `/v1/join/${token}`, input),
+  ): Promise<{
+    session: InterviewSession;
+    participant: Participant;
+    collaboration_token: string;
+  }> => (USE_MOCK ? mockApi.join(token, input) : request("POST", `/v1/join/${token}`, input)),
 
   /* ------------------------ Canvas ------------------------ */
 
   /** GET /v1/sessions/{id}/canvas */
-  getCanvas: (id: string): Promise<{ document: CanvasDocument; collaboration_token: string; websocket_url: string }> =>
+  getCanvas: (
+    id: string,
+  ): Promise<{ document: CanvasDocument; collaboration_token: string; websocket_url: string }> =>
     USE_MOCK ? mockApi.getCanvas(id) : request("GET", `/v1/sessions/${id}/canvas`),
 
   /** PUT /v1/sessions/{id}/canvas — autosave fallback when the socket is down */
   saveCanvas: (id: string, document: CanvasDocument): Promise<{ saved_at: string }> =>
-    USE_MOCK ? mockApi.saveCanvas(id, document) : request("PUT", `/v1/sessions/${id}/canvas`, document),
+    USE_MOCK
+      ? mockApi.saveCanvas(id, document)
+      : request("PUT", `/v1/sessions/${id}/canvas`, document),
 
   /* -------------------- Participants ---------------------- */
 

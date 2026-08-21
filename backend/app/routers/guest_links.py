@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, Request
+import os
+
+from fastapi import APIRouter, Depends
 
 from ..auth import TokenRecord, get_current_actor, get_store
 from ..models import CreateGuestLinkRequest, GuestLink, Role
@@ -6,12 +8,16 @@ from ..store import Store
 
 router = APIRouter(prefix="/v1/sessions/{id}/guest-links", tags=["guest-links"])
 
+# The candidate opens this link in the frontend app, not the API — which is
+# usually a different origin (a separate dev server, or a separate deployment
+# entirely), so it can't be inferred from the incoming request.
+FRONTEND_BASE_URL = os.environ.get("FRONTEND_BASE_URL", "http://localhost:8080")
+
 
 @router.post("", response_model=GuestLink, status_code=201)
 async def create_guest_link(
     id: str,
     body: CreateGuestLinkRequest,
-    request: Request,
     actor: TokenRecord = Depends(get_current_actor),
     store: Store = Depends(get_store),
 ) -> GuestLink:
@@ -22,7 +28,7 @@ async def create_guest_link(
         role_granted=body.role_granted or Role.candidate,
         expires_at=body.expires_at,
         max_uses=body.max_uses,
-        base_url=str(request.base_url),
+        base_url=FRONTEND_BASE_URL,
     )
 
 

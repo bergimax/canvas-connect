@@ -3,14 +3,7 @@
  * VITE_API_BASE_URL is configured. Data lives in localStorage so page
  * reloads restore the latest confirmed state, as the spec requires.
  */
-import type {
-  CanvasDocument,
-  GuestLink,
-  InterviewSession,
-  Participant,
-  Role,
-  User,
-} from "./types";
+import type { CanvasDocument, GuestLink, InterviewSession, Participant, Role, User } from "./types";
 import { PARTICIPANT_COLORS } from "./palette";
 
 const KEY = "sdi.mock.v1";
@@ -104,10 +97,21 @@ function mustSession(store: Store, id: string): InterviewSession {
   return s;
 }
 
-const delay = <T,>(v: T): Promise<T> => new Promise((r) => setTimeout(() => r(v), 90));
+const delay = <T>(v: T): Promise<T> => new Promise((r) => setTimeout(() => r(v), 90));
+
+const DEMO_PASSWORD = "password123";
 
 export const mockApi = {
   requestMagicLink: (_email: string) => delay({ sent: true }),
+
+  login: (email: string, password: string) => {
+    const store = read();
+    if (email.toLowerCase() !== store.user.email.toLowerCase() || password !== DEMO_PASSWORD) {
+      return Promise.reject(new Error("Email or password is incorrect"));
+    }
+    return delay({ access_token: "mock_" + uid() });
+  },
+
   me: () => delay(read().user),
 
   listSessions: () => delay(read().sessions.filter((s) => s.state !== "archived")),
@@ -208,7 +212,9 @@ export const mockApi = {
       ended_at: null,
       created_at: now(),
       updated_at: now(),
-      participants: src.participants.filter((p) => p.role === "owner").map((p) => ({ ...p, session_id: newId })),
+      participants: src.participants
+        .filter((p) => p.role === "owner")
+        .map((p) => ({ ...p, session_id: newId })),
     };
     store.sessions.unshift(copy);
     const srcDoc = store.canvases[id];
@@ -224,11 +230,17 @@ export const mockApi = {
     return delay(copy);
   },
 
-  listGuestLinks: (id: string) => delay(read().links.filter((l) => l.session_id === id && !l.revoked_at)),
+  listGuestLinks: (id: string) =>
+    delay(read().links.filter((l) => l.session_id === id && !l.revoked_at)),
 
-  createGuestLink: (id: string, input?: { role_granted?: Role; expires_at?: string | null; max_uses?: number | null }) => {
+  createGuestLink: (
+    id: string,
+    input?: { role_granted?: Role; expires_at?: string | null; max_uses?: number | null },
+  ) => {
     const store = read();
-    store.links = store.links.map((l) => (l.session_id === id ? { ...l, revoked_at: l.revoked_at ?? now() } : l));
+    store.links = store.links.map((l) =>
+      l.session_id === id ? { ...l, revoked_at: l.revoked_at ?? now() } : l,
+    );
     const token = `${id}.${uid()}${uid()}`;
     const link: GuestLink = {
       id: "lnk_" + uid(),
@@ -258,10 +270,20 @@ export const mockApi = {
     const link = store.links.find((l) => l.url.endsWith(token));
     const sessionId = token.split(".")[0]!;
     const session = store.sessions.find((s) => s.id === sessionId);
-    if (!session) return delay({ session_title: "", joinable: false, reason: "This link is not valid." });
-    if (link?.revoked_at) return delay({ session_title: session.title, joinable: false, reason: "This link was revoked." });
+    if (!session)
+      return delay({ session_title: "", joinable: false, reason: "This link is not valid." });
+    if (link?.revoked_at)
+      return delay({
+        session_title: session.title,
+        joinable: false,
+        reason: "This link was revoked.",
+      });
     if (session.state === "archived")
-      return delay({ session_title: session.title, joinable: false, reason: "This interview is archived." });
+      return delay({
+        session_title: session.title,
+        joinable: false,
+        reason: "This interview is archived.",
+      });
     return delay({ session_title: session.title, joinable: true });
   },
 

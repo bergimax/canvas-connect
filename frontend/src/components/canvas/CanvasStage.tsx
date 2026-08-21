@@ -3,6 +3,7 @@ import type { BoxElement, CanvasElement, ConnectorElement, Participant, StrokeEl
 import type { CanvasEngine } from "@/hooks/useCanvasEngine";
 import type { Tool } from "./Toolbar";
 import { PALETTE_INDEX } from "@/lib/palette";
+import { ComponentIcon } from "./ComponentIcon";
 
 export interface Viewport {
   x: number;
