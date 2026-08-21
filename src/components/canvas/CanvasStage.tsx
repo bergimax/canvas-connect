@@ -535,10 +535,5 @@ export function CanvasStage({
 }
 
 function IconBadge({ icon, sticky }: { icon: string; sticky: boolean }) {
-  // Rendered inside foreignObject; lazy import avoided for SSR safety.
-  return (
-    <span className={`text-[10px] uppercase tracking-widest ${sticky ? "text-[#20242c]/60" : "text-primary"}`}>
-      {icon.replace(/([A-Z])/g, " $1").trim()}
-    </span>
-  );
+  return <ComponentIcon name={icon} className={`size-4 ${sticky ? "text-[#20242c]" : "text-primary"}`} />;
 }
