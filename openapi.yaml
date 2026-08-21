@@ -10,18 +10,28 @@ info:
 
     ## Authentication
 
-    All authenticated requests are made with `fetch(..., { credentials: "include" })` —
-    the frontend never sends an `Authorization` header. The backend must authenticate
-    requests via an HttpOnly session cookie:
+    Authenticated requests carry `Authorization: Bearer <token>`. Two kinds of
+    bearer token exist:
 
-    - Interviewers authenticate with an email magic link (`POST /v1/auth/magic-link`);
-      clicking the emailed link must set the session cookie.
-    - Candidates/guests authenticate implicitly by completing `POST /v1/join/{token}`,
-      which must also set the session cookie for the resulting guest participant.
+    - **User tokens** — interviewers. `POST /v1/auth/magic-link` is documented
+      here as the primary flow, but this backend has no email provider, so it
+      always reports `{ "sent": true }` without issuing a token. The practical
+      way to obtain a user token is `POST /v1/auth/login` (email + password;
+      passwords are stored hashed, never in plaintext).
+    - **Participant tokens** — guests. Returned as `collaboration_token` by
+      `POST /v1/join/{token}` and reissued by `GET /v1/sessions/{id}/canvas`.
+      Usable both as the WebSocket join credential and as a normal bearer
+      token on the REST endpoints the participant's role is allowed to call.
 
-    Endpoints marked with the `cookieAuth` security requirement below reject
-    unauthenticated callers with `401 unauthenticated`. Endpoints with no security
-    requirement are reachable without a session (pre-auth flows).
+    Note: the reference frontend client (`frontend/src/lib/api.ts`) currently
+    calls `fetch(..., { credentials: "include" })` and sends no `Authorization`
+    header — it was written against an earlier cookie-based draft of this
+    contract. Wiring the frontend up to bearer-token auth is a follow-up, not
+    covered by this backend implementation.
+
+    Endpoints marked with the `bearerAuth` security requirement below reject
+    unauthenticated callers with `401 unauthenticated`. Endpoints with no
+    security requirement are reachable without a token (pre-auth flows).
 
     ## Errors
 
@@ -69,7 +79,7 @@ tags:
     description: Session participant management
 
 security:
-  - cookieAuth: []
+  - bearerAuth: []
 
 paths:
   /v1/auth/magic-link:
@@ -99,6 +109,39 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "429":
           $ref: "#/components/responses/RateLimited"
+
+  /v1/auth/login:
+    post:
+      tags: [auth]
+      summary: Exchange email + password for a bearer token
+      operationId: login
+      description: |
+        Not part of the original illustrative API surface in docs/specs.md —
+        added because this backend has no email provider to complete the
+        magic-link flow above. Passwords are verified against a bcrypt hash;
+        the plaintext password is never stored.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          description: Email or password is incorrect
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /v1/me:
     get:
@@ -507,11 +550,12 @@ paths:
 
 components:
   securitySchemes:
-    cookieAuth:
-      type: apiKey
-      in: cookie
-      name: session
-      description: HttpOnly session cookie set on magic-link sign-in or guest join.
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        User token from POST /v1/auth/login, or participant (collaboration)
+        token from POST /v1/join/{token} or GET /v1/sessions/{id}/canvas.
 
   parameters:
     SessionId:
@@ -732,6 +776,27 @@ components:
         email:
           type: string
           format: email
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+
+    TokenResponse:
+      type: object
+      required: [access_token, token_type]
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          enum: [bearer]
 
     CreateSessionRequest:
       type: object
