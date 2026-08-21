@@ -16,7 +16,7 @@ async def create_session(
 ) -> InterviewSession:
     if actor.subject != "user":
         raise ApiError(403, "forbidden", "Only interviewers can create sessions")
-    owner = store.users[actor.user_id]
+    owner = store.get_user(actor.user_id)
     return store.create_session(owner=owner, title=body.title, prompt=body.prompt or "", scheduled_at=body.scheduled_at)
 
 

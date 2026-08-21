@@ -65,7 +65,7 @@ async def get_current_actor(
 ) -> TokenRecord:
     if credentials is None:
         raise ApiError(401, "unauthenticated", "Missing bearer token")
-    record = store.tokens.get(credentials.credentials)
+    record = store.get_token(credentials.credentials)
     if record is None or record.expires_at < now():
         raise ApiError(401, "unauthenticated", "Invalid or expired token")
     return record

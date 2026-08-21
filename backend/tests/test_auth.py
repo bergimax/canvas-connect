@@ -47,7 +47,7 @@ def test_me_returns_seeded_user(client, owner_headers):
 
 def test_passwords_are_hashed_not_stored_in_plaintext(client):
     store = client.app.state.store
-    user_id = store.users_by_email[DEMO_EMAIL]
-    stored = store.passwords[user_id]
+    user = store.find_user_by_email(DEMO_EMAIL)
+    stored = store.get_password_hash(user.id)
     assert stored != DEMO_PASSWORD
     assert stored.startswith("$2b$")

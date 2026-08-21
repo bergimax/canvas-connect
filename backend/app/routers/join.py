@@ -18,7 +18,7 @@ def _validate(link: GuestLink | None, session: InterviewSession | None, store: S
         return "This link has expired."
     if session.state == SessionState.archived:
         return "This interview is archived."
-    if link.max_uses is not None and store.guest_link_uses.get(link.id, 0) >= link.max_uses:
+    if link.max_uses is not None and store.get_guest_link_use_count(link.id) >= link.max_uses:
         return "This link has reached its participant limit."
     return None
 
@@ -26,7 +26,7 @@ def _validate(link: GuestLink | None, session: InterviewSession | None, store: S
 @router.get("/{token}", response_model=JoinPreview)
 async def preview_join(token: str, store: Store = Depends(get_store)) -> JoinPreview:
     link = store.find_guest_link_by_token(token)
-    session = store.sessions.get(link.session_id) if link else None
+    session = store.get_session(link.session_id) if link else None
     reason = _validate(link, session, store)
     if reason is not None:
         return JoinPreview(session_title=session.title if session else "", joinable=False, reason=reason)
@@ -36,7 +36,7 @@ async def preview_join(token: str, store: Store = Depends(get_store)) -> JoinPre
 @router.post("/{token}", response_model=JoinResponse, status_code=201)
 async def join(token: str, body: JoinRequest, store: Store = Depends(get_store)) -> JoinResponse:
     link = store.find_guest_link_by_token(token)
-    session = store.sessions.get(link.session_id) if link else None
+    session = store.get_session(link.session_id) if link else None
     reason = _validate(link, session, store)
     if reason is not None:
         status_code = 404 if link is None or session is None else 409

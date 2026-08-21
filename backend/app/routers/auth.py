@@ -28,7 +28,7 @@ async def request_magic_link(_body: MagicLinkRequest) -> SentResponse:
 @router.post("/v1/auth/login", response_model=TokenResponse)
 async def login(body: LoginRequest, store: Store = Depends(get_store)) -> TokenResponse:
     user = store.find_user_by_email(body.email)
-    if user is None or not verify_password(body.password, store.passwords[user.id]):
+    if user is None or not verify_password(body.password, store.get_password_hash(user.id)):
         raise ApiError(401, "invalid_credentials", "Email or password is incorrect")
     token = store.issue_user_token(user.id)
     return TokenResponse(access_token=token)
@@ -38,4 +38,4 @@ async def login(body: LoginRequest, store: Store = Depends(get_store)) -> TokenR
 async def get_me(actor: TokenRecord = Depends(get_current_actor), store: Store = Depends(get_store)) -> User:
     if actor.subject != "user":
         raise ApiError(403, "forbidden", "Guests do not have a user profile")
-    return store.users[actor.user_id]
+    return store.get_user(actor.user_id)

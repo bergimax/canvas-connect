@@ -9,8 +9,8 @@ DEMO_PASSWORD = "password123"
 
 @pytest.fixture
 def client() -> TestClient:
-    # Fresh app + store per test so seeded data and tokens never leak across tests.
-    return TestClient(create_app())
+    # Fresh app + in-memory database per test so seeded data and tokens never leak across tests.
+    return TestClient(create_app(database_url="sqlite:///:memory:"))
 
 
 @pytest.fixture

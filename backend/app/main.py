@@ -1,14 +1,23 @@
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from .db import DEFAULT_DATABASE_URL, create_session_factory, get_engine
 from .errors import register_exception_handlers
 from .routers import auth, canvas, guest_links, join, participants, sessions
 from .store import Store
 
 
-def create_app() -> FastAPI:
+def create_app(database_url: str | None = None) -> FastAPI:
     app = FastAPI(title="Canvas Connect API", version="1.0.0")
-    app.state.store = Store()
+
+    # DATABASE_URL is any SQLAlchemy URL (e.g. postgresql+psycopg2://...);
+    # defaults to a local SQLite file so the app runs with zero setup.
+    database_url = database_url or os.environ.get("DATABASE_URL", DEFAULT_DATABASE_URL)
+    engine = get_engine(database_url)
+    session_factory = create_session_factory(engine)
+    app.state.store = Store(session_factory())
 
     register_exception_handlers(app)
 
