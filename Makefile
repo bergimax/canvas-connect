@@ -2,16 +2,17 @@ BACKEND_PORT ?= 8000
 FRONTEND_PORT ?= 8080
 
 .DEFAULT_GOAL := help
-.PHONY: help install backend-install frontend-install dev backend frontend test lint stop
+.PHONY: help install backend-install frontend-install dev backend frontend test test-integration lint stop
 
 help:
-	@echo "make install   - install backend (uv) and frontend (npm) dependencies"
-	@echo "make dev       - run backend + frontend together (Ctrl+C stops both)"
-	@echo "make backend   - run just the backend on :$(BACKEND_PORT)"
-	@echo "make frontend  - run just the frontend on :$(FRONTEND_PORT)"
-	@echo "make test      - run backend pytest suite"
-	@echo "make lint      - typecheck + lint the frontend"
-	@echo "make stop      - kill any backend/frontend dev servers left running"
+	@echo "make install           - install backend (uv) and frontend (npm) dependencies"
+	@echo "make dev               - run backend + frontend together (Ctrl+C stops both)"
+	@echo "make backend           - run just the backend on :$(BACKEND_PORT)"
+	@echo "make frontend          - run just the frontend on :$(FRONTEND_PORT)"
+	@echo "make test              - run backend pytest suite (in-process, SQLite)"
+	@echo "make test-integration  - run tests against docker-compose.yaml (needs Docker)"
+	@echo "make lint              - typecheck + lint the frontend"
+	@echo "make stop              - kill any backend/frontend dev servers left running"
 
 install: backend-install frontend-install
 
@@ -38,6 +39,9 @@ frontend:
 
 test:
 	cd backend && uv run pytest -q
+
+test-integration:
+	cd backend && uv run pytest -q tests_integration
 
 lint:
 	cd frontend && npx tsc --noEmit && npm run lint

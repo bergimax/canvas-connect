@@ -15,6 +15,7 @@ services:
 
   app:
     build: .
+    image: canvas-connect:local
     ports:
       - "8000:8000"
     environment:
@@ -22,6 +23,14 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    healthcheck:
+      # No curl/wget in the image (stripped after building the frontend
+      # stage) — python3 is always there, so use it as the probe.
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/')"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
 
 volumes:
   db-data:
