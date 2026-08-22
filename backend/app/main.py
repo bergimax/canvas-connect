@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .db import DEFAULT_DATABASE_URL, create_session_factory, get_engine
 from .errors import register_exception_handlers
+from .frontend_proxy import register_frontend_proxy
 from .routers import auth, canvas, guest_links, join, participants, sessions
 from .store import Store
 
@@ -35,6 +36,10 @@ def create_app(database_url: str | None = None) -> FastAPI:
     app.include_router(join.router)
     app.include_router(canvas.router)
     app.include_router(participants.router)
+
+    # Catch-all, must stay last: anything not matched by a /v1 route above
+    # falls through to the frontend (see frontend_proxy.py).
+    register_frontend_proxy(app)
 
     return app
 
