@@ -12,6 +12,13 @@ COPY frontend/ ./
 # node-server produces a plain Node HTTP server + static assets instead,
 # which is what the backend proxies to at runtime (see docker-entrypoint.sh).
 ENV NITRO_PRESET=node-server
+# Vite inlines import.meta.env.VITE_* at build time. VITE_API_BASE_URL is
+# deliberately left unset (the backend serves this same origin, so relative
+# `/v1/...` fetches already work — see docker-entrypoint.sh /
+# frontend_proxy.py); without VITE_USE_MOCK_API=false, api.ts's USE_MOCK
+# check treats that empty base URL as "no backend configured" and silently
+# serves the in-memory mock backend instead of ever calling the real one.
+ENV VITE_USE_MOCK_API=false
 RUN npm run build
 # -> /app/frontend/.output/public (static assets)
 # -> /app/frontend/.output/server (self-contained Node server)

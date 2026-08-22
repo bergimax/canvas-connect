@@ -20,6 +20,10 @@ services:
       - "8000:8000"
     environment:
       DATABASE_URL: postgresql+psycopg://canvas_connect:canvas_connect@db:5432/canvas_connect
+      # Backend serves the frontend from the same origin in this setup (see
+      # Dockerfile/docker-entrypoint.sh) — without this, guest links default
+      # to http://localhost:8080, a port nothing is listening on here.
+      FRONTEND_BASE_URL: http://localhost:8000
     depends_on:
       db:
         condition: service_healthy

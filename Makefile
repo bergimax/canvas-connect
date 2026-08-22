@@ -2,7 +2,7 @@ BACKEND_PORT ?= 8000
 FRONTEND_PORT ?= 8080
 
 .DEFAULT_GOAL := help
-.PHONY: help install backend-install frontend-install dev backend frontend test test-integration lint stop
+.PHONY: help install backend-install frontend-install e2e-install dev backend frontend test test-integration test-e2e lint stop
 
 help:
 	@echo "make install           - install backend (uv) and frontend (npm) dependencies"
@@ -11,6 +11,7 @@ help:
 	@echo "make frontend          - run just the frontend on :$(FRONTEND_PORT)"
 	@echo "make test              - run backend pytest suite (in-process, SQLite)"
 	@echo "make test-integration  - run tests against docker-compose.yaml (needs Docker)"
+	@echo "make test-e2e          - run Playwright tests against docker-compose.yaml (needs Docker)"
 	@echo "make lint              - typecheck + lint the frontend"
 	@echo "make stop              - kill any backend/frontend dev servers left running"
 
@@ -21,6 +22,9 @@ backend-install:
 
 frontend-install:
 	cd frontend && npm install
+
+e2e-install:
+	cd e2e && npm install && npx playwright install --with-deps chromium
 
 # Backend on :$(BACKEND_PORT), frontend on :$(FRONTEND_PORT); frontend/.env.local
 # points VITE_API_BASE_URL at the backend, and the backend's FRONTEND_BASE_URL
@@ -42,6 +46,9 @@ test:
 
 test-integration:
 	cd backend && uv run pytest -q tests_integration
+
+test-e2e:
+	cd e2e && npm test
 
 lint:
 	cd frontend && npx tsc --noEmit && npm run lint
