@@ -278,6 +278,12 @@ class Store:
             )
         )
         self.session.add(row)
+        # Flush so the sessions row exists before the canvas_documents insert
+        # below — there's no relationship() between SessionRow and
+        # CanvasDocumentRow, so the ORM doesn't otherwise order these two
+        # inserts against each other, and a real FK-enforcing DB (Postgres,
+        # unlike SQLite) rejects the insert if it lands first.
+        self.session.flush()
         self.session.add(
             CanvasDocumentRow(
                 id=_id("doc"), session_id=session_id, schema_version=1, latest_operation_cursor=0,
@@ -355,6 +361,9 @@ class Store:
             )
         )
         self.session.add(new_row)
+        # See create_session: flush before inserting the dependent
+        # canvas_documents row so a FK-enforcing DB doesn't reject it.
+        self.session.flush()
         src_doc = self._get_canvas_row(session.id)
         self.session.add(
             CanvasDocumentRow(

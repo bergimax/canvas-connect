@@ -153,6 +153,12 @@ def get_engine(database_url: str) -> Engine:
             # in-memory database — otherwise each connection would get its
             # own empty one. Standard pattern for testing with SQLite.
             engine_kwargs["poolclass"] = StaticPool
+    else:
+        # Postgres (or any networked DB) connections can go stale — e.g. the
+        # server closing idle ones — in a way a local SQLite file never does;
+        # pre_ping catches that with a cheap check-out probe instead of
+        # surfacing it as a query failure.
+        engine_kwargs["pool_pre_ping"] = True
     return create_engine(database_url, connect_args=connect_args, **engine_kwargs)
 
 
