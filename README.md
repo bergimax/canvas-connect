@@ -20,6 +20,7 @@ Full product specification: [docs/specs.md](docs/specs.md).
 - [CI/CD](#cicd)
 - [Limitations](#limitations)
 - [Future work](#future-work)
+- [License](#license)
 
 ## The problem
 
@@ -99,7 +100,7 @@ The app runs with zero configuration out of the box (SQLite file, mock auth seed
 | `VITE_API_BASE_URL` | frontend (dev only) | unset | Points the Vite dev server at a backend; unset means same-origin |
 | `VITE_USE_MOCK_API` | frontend (dev only) | `true` unless a base URL is set | Forces the in-memory mock backend (`frontend/src/lib/mock-backend.ts`) on or off |
 
-`docker-compose.prod.yml` (the production override, see [Deployment](#deployment)) additionally reads `DB_PASSWORD`, `SITE_ADDRESS`, and `FRONTEND_BASE_URL` from a `.env` file next to it — all required, none have defaults, since it's meant to run on a real host, not a laptop.
+`docker-compose.prod.yml` (the production override, see [Deployment](#deployment)) additionally reads `DB_PASSWORD`, `SITE_ADDRESS`, and `FRONTEND_BASE_URL` from a `.env` file next to it — all required, none have defaults, since it's meant to run on a real host, not a laptop. Copy [`.env.example`](.env.example) to `.env` and fill it in; not needed for the plain `docker-compose.yml` quickstart above.
 
 ## Deployment
 
@@ -205,3 +206,7 @@ Roughly in the order I'd tackle them:
 2. Replace the poll-based sync with the WebSocket gateway `docs/specs.md` §10.2/§12 describes, since that's the single biggest gap between what's built and what's specified, and the one most likely to surprise a reader of the architecture doc.
 3. Add rate limiting and operation/document size limits (spec §13) before this is exposed to anyone other than trusted interviewers.
 4. A minimal monitoring dashboard — session/join counts, canvas save latency, error rates by endpoint — now that there's a deploy pipeline worth watching.
+
+## License
+
+[MIT](LICENSE).
