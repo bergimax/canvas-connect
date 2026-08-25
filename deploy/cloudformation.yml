@@ -1,0 +1,185 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Canvas Connect - single EC2 instance running the app via Docker Compose
+  (app + Postgres + Caddy reverse proxy), built from the public GitHub repo
+  at boot. Access is via SSM Session Manager only (no SSH port open).
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC to deploy into.
+
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Public subnet (must route to an Internet Gateway) in the chosen VPC.
+
+  InstanceType:
+    Type: String
+    Default: t3.small
+    AllowedValues: [t3.small, t3.medium, t3.large]
+    Description: >
+      t3.small (2GB RAM) works but the frontend build at boot is memory-heavy;
+      a 1GB swapfile is created as a safety net. Use t3.medium if the build
+      fails or is too slow.
+
+  DBPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+    Description: >
+      Postgres password. NoEcho hides it from the CFN console/CLI output,
+      but note it is still readable in plaintext EC2 instance UserData by
+      anyone with ec2:DescribeInstanceAttribute on this instance, and by
+      root on the box itself - acceptable for a single personal instance,
+      not for a multi-tenant account.
+
+  SiteAddress:
+    Type: String
+    Default: ""
+    Description: >
+      Public domain (e.g. app.example.com) once you have one, for automatic
+      HTTPS via Caddy/Let's Encrypt. Leave empty to serve plain HTTP on the
+      instance's IP for now.
+
+  GitRepoUrl:
+    Type: String
+    Default: https://github.com/bergimax/canvas-connect.git
+
+  GitRef:
+    Type: String
+    Default: main
+
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+
+Resources:
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref InstanceRole
+
+  InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Canvas Connect app - allow HTTP/HTTPS in, no SSH (SSM only)
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+
+  Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref InstanceProfile
+      Tags:
+        - Key: Name
+          Value: canvas-connect
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeType: gp3
+            VolumeSize: 30
+            DeleteOnTermination: true
+      NetworkInterfaces:
+        - DeviceIndex: 0
+          AssociatePublicIpAddress: true
+          SubnetId: !Ref SubnetId
+          GroupSet:
+            - !Ref InstanceSecurityGroup
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euxo pipefail
+
+          # Small safety net: the frontend build (npm ci + vite build) run
+          # below is memory-heavy relative to a t3.small.
+          if [ ! -f /swapfile ]; then
+            fallocate -l 1G /swapfile
+            chmod 600 /swapfile
+            mkswap /swapfile
+            swapon /swapfile
+            echo '/swapfile none swap sw 0 0' >> /etc/fstab
+          fi
+
+          dnf update -y
+          dnf install -y docker git
+          systemctl enable --now docker
+
+          mkdir -p /usr/local/lib/docker/cli-plugins
+          curl -fsSL https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64 \
+            -o /usr/local/lib/docker/cli-plugins/docker-compose
+          chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+
+          mkdir -p /opt/app
+          git clone --branch "${GitRef}" --depth 1 "${GitRepoUrl}" /opt/app
+          cd /opt/app
+
+          site_address="${SiteAddress}"
+          if [ -n "${!site_address}" ]; then
+            frontend_base_url="https://${!site_address}"
+          else
+            public_ip=$(curl -fsSL http://169.254.169.254/latest/meta-data/public-ipv4)
+            frontend_base_url="http://${!public_ip}"
+          fi
+
+          cat > .env <<ENVEOF
+          DB_PASSWORD=${DBPassword}
+          SITE_ADDRESS=${!site_address}
+          FRONTEND_BASE_URL=${!frontend_base_url}
+          ENVEOF
+
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+
+  ElasticIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  ElasticIPAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      InstanceId: !Ref Instance
+      AllocationId: !GetAtt ElasticIP.AllocationId
+
+Outputs:
+  PublicIp:
+    Description: Stable public IP of the instance.
+    Value: !Ref ElasticIP
+
+  AppUrl:
+    Description: >
+      App URL. If you deployed with an empty SiteAddress, this is
+      http://<PublicIp>; once you have a domain, point an A record at
+      PublicIp, redeploy the stack with SiteAddress set, and Caddy will
+      switch to https://<SiteAddress> with an automatic Let's Encrypt cert.
+    Value: !Sub "http://${ElasticIP}"
+
+  SsmConnectCommand:
+    Description: Command to open a shell on the instance (no SSH key needed).
+    Value: !Sub "aws ssm start-session --target ${Instance}"

@@ -1,0 +1,222 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-cd-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------
+  # Fast checks, run in parallel. Neither depends on the other, so GitHub
+  # Actions schedules them concurrently.
+  # ---------------------------------------------------------------------
+
+  backend-tests:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Install backend deps
+        run: make backend-install
+
+      # In-process suite against SQLite (backend/tests) — no Docker needed.
+      - name: Run backend tests
+        run: make test
+
+  frontend-tests:
+    name: Frontend checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend deps
+        run: make frontend-install
+
+      # No frontend unit-test runner is configured in this repo yet — typecheck
+      # + lint + a production build is the closest equivalent "frontend tests",
+      # and catches build breakage before it reaches the Docker image build.
+      - name: Typecheck + lint
+        run: make lint
+
+      - name: Build frontend
+        run: cd frontend && npm run build
+
+  # ---------------------------------------------------------------------
+  # Builds the real Docker Compose stack (app + Postgres) and runs the
+  # integration and e2e suites against it. Both suites manage the compose
+  # stack's lifecycle themselves (up/down), so this job just needs Docker
+  # (preinstalled on ubuntu-latest) plus the tooling to drive the tests.
+  # Runs after both fast-check jobs pass.
+  # ---------------------------------------------------------------------
+
+  integration-and-e2e:
+    name: Integration & E2E tests (Docker Compose stack)
+    runs-on: ubuntu-latest
+    needs: [backend-tests, frontend-tests]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Install backend deps (pytest runner for integration tests)
+        run: make backend-install
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+
+      # Builds the docker-compose.yml stack (image not yet cached on the
+      # runner) and runs pytest against the live containers.
+      - name: Run integration tests against docker compose
+        run: make test-integration
+
+      - name: Install e2e deps (Playwright + browser)
+        run: make e2e-install
+
+      # Reuses the image built by the integration step above.
+      - name: Run e2e tests against docker compose
+        run: make test-e2e
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: e2e/playwright-report/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------
+  # Deploy to AWS. Authenticates via GitHub OIDC (no long-lived AWS keys)
+  # and redeploys the EC2 instance provisioned by deploy/cloudformation.yml
+  # by asking it (over SSM, no SSH) to pull the latest code and restart the
+  # Docker Compose stack, then confirms the app is actually up by polling
+  # its health endpoint.
+  #
+  # AWS isn't provisioned yet, so this job is written to no-op cleanly
+  # instead of failing until the required repo secrets/variables exist:
+  #   Secrets:
+  #     AWS_ROLE_ARN        - IAM role ARN GitHub OIDC assumes (see below)
+  #   Variables:
+  #     AWS_REGION           - e.g. eu-west-1
+  #     DEPLOY_HEALTH_URL     - public URL to health-check after deploy,
+  #                             e.g. http://<elastic-ip>/ or https://<domain>/
+  #
+  # Once deploy/cloudformation.yml has been deployed and those are set,
+  # this job starts deploying for real with no further changes needed.
+  #
+  # The IAM role trust policy should scope the OIDC subject to this repo,
+  # e.g.:
+  #   repo:<org>/<repo>:ref:refs/heads/main
+  # and the role needs permission for:
+  #   ec2:DescribeInstances, ssm:SendCommand, ssm:GetCommandInvocation
+  # on the "canvas-connect" instance.
+  # ---------------------------------------------------------------------
+
+  deploy:
+    name: Deploy to AWS
+    runs-on: ubuntu-latest
+    needs: [integration-and-e2e]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: production
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Check AWS deploy is configured
+        id: aws_ready
+        run: |
+          if [ -z "${{ secrets.AWS_ROLE_ARN }}" ] || [ -z "${{ vars.AWS_REGION }}" ]; then
+            echo "::notice::AWS_ROLE_ARN secret and/or AWS_REGION variable not set — AWS isn't provisioned yet, skipping deploy."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure AWS credentials (OIDC)
+        if: steps.aws_ready.outputs.ready == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Redeploy app on EC2 instance via SSM
+        if: steps.aws_ready.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+
+          INSTANCE_ID=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=canvas-connect" "Name=instance-state-name,Values=running" \
+            --query "Reservations[0].Instances[0].InstanceId" --output text)
+
+          if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "None" ]; then
+            echo "::error::No running 'canvas-connect' EC2 instance found — has deploy/cloudformation.yml been deployed?"
+            exit 1
+          fi
+          echo "Deploying to instance $INSTANCE_ID"
+
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Deploy ${{ github.sha }} via GitHub Actions" \
+            --parameters 'commands=["set -euo pipefail","cd /opt/app","git fetch origin main","git checkout origin/main","docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build"]' \
+            --query "Command.CommandId" --output text)
+
+          aws ssm wait command-executed --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" || true
+
+          STATUS=$(aws ssm get-command-invocation --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" --query "Status" --output text)
+          echo "Deploy command status: $STATUS"
+          if [ "$STATUS" != "Success" ]; then
+            aws ssm get-command-invocation --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID"
+            exit 1
+          fi
+
+      - name: Health check
+        if: steps.aws_ready.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+          URL="${{ vars.DEPLOY_HEALTH_URL }}"
+          if [ -z "$URL" ]; then
+            echo "::warning::DEPLOY_HEALTH_URL variable not set — skipping post-deploy health check."
+            exit 0
+          fi
+
+          for i in $(seq 1 20); do
+            if curl -fsS -o /dev/null "$URL"; then
+              echo "Health check passed: $URL is up."
+              exit 0
+            fi
+            echo "Attempt $i/20: $URL not healthy yet, retrying in 5s..."
+            sleep 5
+          done
+
+          echo "::error::Health check failed: $URL never became healthy after deploy."
+          exit 1
