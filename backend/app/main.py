@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .db import DEFAULT_DATABASE_URL, create_session_factory, get_engine
 from .errors import register_exception_handlers
 from .frontend_proxy import register_frontend_proxy
-from .routers import auth, canvas, guest_links, join, participants, sessions
+from .routers import auth, canvas, guest_links, health, join, participants, sessions
 from .store import Store
 
 
@@ -30,6 +30,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
         allow_headers=["*"],
     )
 
+    app.include_router(health.router)
     app.include_router(auth.router)
     app.include_router(sessions.router)
     app.include_router(guest_links.router)

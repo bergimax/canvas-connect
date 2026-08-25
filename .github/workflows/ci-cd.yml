@@ -54,9 +54,9 @@ jobs:
       - name: Install frontend deps
         run: make frontend-install
 
-      # No frontend unit-test runner is configured in this repo yet — typecheck
-      # + lint + a production build is the closest equivalent "frontend tests",
-      # and catches build breakage before it reaches the Docker image build.
+      - name: Run frontend tests
+        run: make test-frontend
+
       - name: Typecheck + lint
         run: make lint
 
@@ -127,8 +127,9 @@ jobs:
   #     AWS_ROLE_ARN        - IAM role ARN GitHub OIDC assumes (see below)
   #   Variables:
   #     AWS_REGION           - e.g. eu-west-1
-  #     DEPLOY_HEALTH_URL     - public URL to health-check after deploy,
-  #                             e.g. http://<elastic-ip>/ or https://<domain>/
+  #     DEPLOY_HEALTH_URL     - the app's /health endpoint to check after
+  #                             deploy, e.g. http://<elastic-ip>/health or
+  #                             https://<domain>/health
   #
   # Once deploy/cloudformation.yml has been deployed and those are set,
   # this job starts deploying for real with no further changes needed.
