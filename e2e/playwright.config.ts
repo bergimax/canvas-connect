@@ -5,7 +5,9 @@ export default defineConfig({
   fullyParallel: false,
   retries: 0,
   workers: 1,
-  reporter: "list",
+  // "list" for readable CI logs, "html" (not auto-opened) so CI has a
+  // report worth uploading as an artifact on failure.
+  reporter: [["list"], ["html", { open: "never" }]],
   globalSetup: "./global-setup.ts",
   globalTeardown: "./global-teardown.ts",
   // The candidate's canvas edit only reaches the interviewer through the

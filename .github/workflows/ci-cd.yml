@@ -115,48 +115,35 @@ jobs:
           if-no-files-found: ignore
 
   # ---------------------------------------------------------------------
-  # Deploy to AWS. Authenticates via GitHub OIDC (no long-lived AWS keys)
-  # and redeploys the EC2 instance provisioned by deploy/cloudformation.yml
-  # by asking it (over SSM, no SSH) to pull the latest code and restart the
-  # Docker Compose stack, then confirms the app is actually up by polling
-  # its health endpoint.
+  # Build once, tag with the commit sha, push to ECR. This is the same
+  # image the tests above already exercised the compose stack with is
+  # what actually gets deployed below — the EC2 instance pulls this tag
+  # rather than rebuilding from source on every deploy.
   #
-  # AWS isn't provisioned yet, so this job is written to no-op cleanly
-  # instead of failing until the required repo secrets/variables exist:
-  #   Secrets:
-  #     AWS_ROLE_ARN        - IAM role ARN GitHub OIDC assumes (see below)
-  #   Variables:
-  #     AWS_REGION           - e.g. eu-west-1
-  #     DEPLOY_HEALTH_URL     - the app's /health endpoint to check after
-  #                             deploy, e.g. http://<elastic-ip>/health or
-  #                             https://<domain>/health
-  #
-  # Once deploy/cloudformation.yml has been deployed and those are set,
-  # this job starts deploying for real with no further changes needed.
-  #
-  # The IAM role trust policy should scope the OIDC subject to this repo,
-  # e.g.:
-  #   repo:<org>/<repo>:ref:refs/heads/main
-  # and the role needs permission for:
-  #   ec2:DescribeInstances, ssm:SendCommand, ssm:GetCommandInvocation
-  # on the "canvas-connect" instance.
+  # AWS isn't provisioned yet, so — like the deploy job below — this job
+  # no-ops cleanly instead of failing until the required repo
+  # secrets/variables exist. See the deploy job's comment for the full list
+  # and the IAM permissions each job needs.
   # ---------------------------------------------------------------------
 
-  deploy:
-    name: Deploy to AWS
+  build-and-push:
+    name: Build & push image to ECR
     runs-on: ubuntu-latest
     needs: [integration-and-e2e]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    environment: production
     permissions:
       id-token: write
       contents: read
+    outputs:
+      ready: ${{ steps.aws_ready.outputs.ready }}
     steps:
+      - uses: actions/checkout@v4
+
       - name: Check AWS deploy is configured
         id: aws_ready
         run: |
           if [ -z "${{ secrets.AWS_ROLE_ARN }}" ] || [ -z "${{ vars.AWS_REGION }}" ]; then
-            echo "::notice::AWS_ROLE_ARN secret and/or AWS_REGION variable not set — AWS isn't provisioned yet, skipping deploy."
+            echo "::notice::AWS_ROLE_ARN secret and/or AWS_REGION variable not set — AWS isn't provisioned yet, skipping build/push."
             echo "ready=false" >> "$GITHUB_OUTPUT"
           else
             echo "ready=true" >> "$GITHUB_OUTPUT"
@@ -169,55 +156,76 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
-      - name: Redeploy app on EC2 instance via SSM
+      - name: Log in to ECR
+        if: steps.aws_ready.outputs.ready == 'true'
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push
         if: steps.aws_ready.outputs.ready == 'true'
         run: |
           set -euo pipefail
+          IMAGE="${{ steps.ecr.outputs.registry }}/canvas-connect"
+          docker build -t "$IMAGE:${{ github.sha }}" -t "$IMAGE:latest" .
+          docker push "$IMAGE:${{ github.sha }}"
+          docker push "$IMAGE:latest"
 
-          INSTANCE_ID=$(aws ec2 describe-instances \
-            --filters "Name=tag:Name,Values=canvas-connect" "Name=instance-state-name,Values=running" \
-            --query "Reservations[0].Instances[0].InstanceId" --output text)
+  # ---------------------------------------------------------------------
+  # Deploy to AWS. Authenticates via GitHub OIDC (no long-lived AWS keys)
+  # and redeploys the EC2 instance provisioned by deploy/cloudformation.yml
+  # (see deploy/deploy.sh) by asking it, over SSM (no SSH), to pull the
+  # image build-and-push just pushed and restart the Docker Compose stack,
+  # then confirms the app is actually up by polling its health endpoint —
+  # automatically rolling back to the last known-good image if it isn't.
+  #
+  # AWS isn't provisioned yet, so this job is written to no-op cleanly
+  # instead of failing until the required repo secrets/variables exist:
+  #   Secrets:
+  #     AWS_ROLE_ARN        - IAM role ARN GitHub OIDC assumes (see below)
+  #   Variables:
+  #     AWS_REGION           - e.g. eu-west-1
+  #     DEPLOY_HEALTH_URL     - the app's /health endpoint to check after
+  #                             deploy, e.g. http://<elastic-ip>/health or
+  #                             https://<domain>/health — without it the
+  #                             deploy is unverified and rollback can't
+  #                             trigger, since there's nothing to detect
+  #                             failure with
+  #
+  # Once deploy/cloudformation.yml has been deployed and those are set,
+  # this job starts deploying for real with no further changes needed.
+  #
+  # The IAM role trust policy should scope the OIDC subject to this repo,
+  # e.g.:
+  #   repo:<org>/<repo>:ref:refs/heads/main
+  # and the role needs permission for:
+  #   ec2:DescribeInstances, ssm:SendCommand, ssm:GetCommandInvocation,
+  #   ssm:GetParameter, ssm:PutParameter (on parameter /canvas-connect/*),
+  #   ecr:GetAuthorizationToken, ecr:BatchCheckLayerAvailability,
+  #   ecr:PutImage, ecr:InitiateLayerUpload, ecr:UploadLayerPart,
+  #   ecr:CompleteLayerUpload, ecr:BatchGetImage (on the canvas-connect
+  #   ECR repository)
+  # ---------------------------------------------------------------------
 
-          if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "None" ]; then
-            echo "::error::No running 'canvas-connect' EC2 instance found — has deploy/cloudformation.yml been deployed?"
-            exit 1
-          fi
-          echo "Deploying to instance $INSTANCE_ID"
+  deploy:
+    name: Deploy to AWS
+    runs-on: ubuntu-latest
+    needs: [build-and-push]
+    if: needs.build-and-push.outputs.ready == 'true'
+    environment: production
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
 
-          COMMAND_ID=$(aws ssm send-command \
-            --instance-ids "$INSTANCE_ID" \
-            --document-name "AWS-RunShellScript" \
-            --comment "Deploy ${{ github.sha }} via GitHub Actions" \
-            --parameters 'commands=["set -euo pipefail","cd /opt/app","git fetch origin main","git checkout origin/main","docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build"]' \
-            --query "Command.CommandId" --output text)
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
 
-          aws ssm wait command-executed --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" || true
-
-          STATUS=$(aws ssm get-command-invocation --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" --query "Status" --output text)
-          echo "Deploy command status: $STATUS"
-          if [ "$STATUS" != "Success" ]; then
-            aws ssm get-command-invocation --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID"
-            exit 1
-          fi
-
-      - name: Health check
-        if: steps.aws_ready.outputs.ready == 'true'
-        run: |
-          set -euo pipefail
-          URL="${{ vars.DEPLOY_HEALTH_URL }}"
-          if [ -z "$URL" ]; then
-            echo "::warning::DEPLOY_HEALTH_URL variable not set — skipping post-deploy health check."
-            exit 0
-          fi
-
-          for i in $(seq 1 20); do
-            if curl -fsS -o /dev/null "$URL"; then
-              echo "Health check passed: $URL is up."
-              exit 0
-            fi
-            echo "Attempt $i/20: $URL not healthy yet, retrying in 5s..."
-            sleep 5
-          done
-
-          echo "::error::Health check failed: $URL never became healthy after deploy."
-          exit 1
+      - name: Deploy, health-check, and roll back on failure
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          DEPLOY_HEALTH_URL: ${{ vars.DEPLOY_HEALTH_URL }}
+        run: bash deploy/deploy.sh

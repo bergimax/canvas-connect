@@ -54,6 +54,24 @@ Parameters:
     Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
 
 Resources:
+  # Holds the app image CI builds and tests once (backend + frontend
+  # already verified by the test jobs, plus integration/e2e against the
+  # real compose stack) and pushes on every deploy to main, tagged with
+  # the commit sha. The EC2 instance then just pulls a tag instead of
+  # rebuilding from source on every deploy - keeps what's running
+  # identical, bit-for-bit, to what CI actually tested.
+  EcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: canvas-connect
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: >
+          {"rules":[{"rulePriority":1,"description":"Keep last 20 images",
+          "selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":20},
+          "action":{"type":"expire"}}]}
+
   InstanceRole:
     Type: AWS::IAM::Role
     Properties:
@@ -66,6 +84,8 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        # Lets the instance `docker pull` the images CI pushes to EcrRepository.
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
 
   InstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -183,3 +203,11 @@ Outputs:
   SsmConnectCommand:
     Description: Command to open a shell on the instance (no SSH key needed).
     Value: !Sub "aws ssm start-session --target ${Instance}"
+
+  EcrRepositoryUri:
+    Description: >
+      Where CI pushes built images (see .github/workflows/ci-cd.yml). The
+      deploy job derives this same URI itself from account id + region +
+      the fixed "canvas-connect" repository name, so nothing here needs to
+      be copied into repo secrets/variables.
+    Value: !GetAtt EcrRepository.RepositoryUri

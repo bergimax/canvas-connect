@@ -15,7 +15,12 @@ services:
 
   app:
     build: .
-    image: canvas-connect:local
+    # Overridden on deploy (APP_IMAGE=<ecr-uri>:<sha>) to run the exact image
+    # CI already built and tested, instead of rebuilding from source on the
+    # server. Local dev/tests are unaffected — they never set APP_IMAGE, so
+    # this stays the locally built image, and `docker compose up` only
+    # builds when an image by this tag isn't already present.
+    image: ${APP_IMAGE:-canvas-connect:local}
     ports:
       - "8000:8000"
     environment:
