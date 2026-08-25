@@ -25,7 +25,9 @@ export function PalettePanel({
                   disabled={disabled}
                   onClick={() => onPick(item)}
                   draggable={!disabled}
-                  onDragStart={(e) => e.dataTransfer.setData("application/x-sdi-component", item.type)}
+                  onDragStart={(e) =>
+                    e.dataTransfer.setData("application/x-sdi-component", item.type)
+                  }
                   title={`Add ${item.label}`}
                   className="flex flex-col items-start gap-1.5 rounded-md border border-border bg-elevated px-2.5 py-2 text-left text-xs transition-colors hover:border-primary/60 hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-40"
                 >

@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { BoxElement, CanvasElement, ConnectorElement, Participant, StrokeElement } from "@/lib/types";
+import type {
+  BoxElement,
+  CanvasElement,
+  ConnectorElement,
+  Participant,
+  StrokeElement,
+} from "@/lib/types";
 import type { CanvasEngine } from "@/hooks/useCanvasEngine";
 import type { Tool } from "./Toolbar";
 import { PALETTE_INDEX } from "@/lib/palette";
@@ -63,10 +69,21 @@ export function CanvasStage({
 }) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [draft, setDraft] = useState<StrokeElement | null>(null);
-  const [marquee, setMarquee] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
-  const [pendingConnector, setPendingConnector] = useState<{ fromId: string; x: number; y: number } | null>(null);
+  const [marquee, setMarquee] = useState<{ x: number; y: number; w: number; h: number } | null>(
+    null,
+  );
+  const [pendingConnector, setPendingConnector] = useState<{
+    fromId: string;
+    x: number;
+    y: number;
+  } | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
-  const drag = useRef<{ mode: "move" | "resize" | "pan" | "marquee" | null; start: { x: number; y: number }; origin: Record<string, { x: number; y: number; w?: number; h?: number }>; vp?: Viewport }>({
+  const drag = useRef<{
+    mode: "move" | "resize" | "pan" | "marquee" | null;
+    start: { x: number; y: number };
+    origin: Record<string, { x: number; y: number; w?: number; h?: number }>;
+    vp?: Viewport;
+  }>({
     mode: null,
     start: { x: 0, y: 0 },
     origin: {},
@@ -84,7 +101,9 @@ export function CanvasStage({
     [viewport],
   );
 
-  const boxes = engine.elements.filter((e): e is BoxElement => e.kind !== "stroke" && e.kind !== "connector");
+  const boxes = engine.elements.filter(
+    (e): e is BoxElement => e.kind !== "stroke" && e.kind !== "connector",
+  );
   const connectors = engine.elements.filter((e): e is ConnectorElement => e.kind === "connector");
   const strokes = engine.elements.filter((e): e is StrokeElement => e.kind === "stroke");
   const byId = new Map(boxes.map((b) => [b.id, b]));
@@ -100,7 +119,12 @@ export function CanvasStage({
     updated_at: new Date().toISOString(),
   });
 
-  const createBoxAt = (kind: BoxElement["kind"], x: number, y: number, extra: Partial<BoxElement> = {}) => {
+  const createBoxAt = (
+    kind: BoxElement["kind"],
+    x: number,
+    y: number,
+    extra: Partial<BoxElement> = {},
+  ) => {
     const el: BoxElement = {
       ...newBase(snap(x, snapToGrid), snap(y, snapToGrid)),
       kind,
@@ -119,7 +143,12 @@ export function CanvasStage({
 
   const onPointerDown = (e: React.PointerEvent) => {
     if (e.button === 1 || tool === "pan" || (e.button === 0 && e.altKey)) {
-      drag.current = { mode: "pan", start: { x: e.clientX, y: e.clientY }, origin: {}, vp: viewport };
+      drag.current = {
+        mode: "pan",
+        start: { x: e.clientX, y: e.clientY },
+        origin: {},
+        vp: viewport,
+      };
       (e.currentTarget as Element).setPointerCapture(e.pointerId);
       return;
     }
@@ -152,9 +181,15 @@ export function CanvasStage({
       return;
     }
 
-    if (tool === "text") return createBoxAt("text", p.x, p.y, { width: 180, height: 40, label: "Text" });
+    if (tool === "text")
+      return createBoxAt("text", p.x, p.y, { width: 180, height: 40, label: "Text" });
     if (tool === "sticky")
-      return createBoxAt("sticky", p.x, p.y, { width: 160, height: 140, label: "Note", color: "#f5a524" });
+      return createBoxAt("sticky", p.x, p.y, {
+        width: 160,
+        height: 140,
+        label: "Note",
+        color: "#f5a524",
+      });
     if (tool === "rect") return createBoxAt("shape", p.x, p.y, { shape: "rect", label: "" });
     if (tool === "ellipse") return createBoxAt("shape", p.x, p.y, { shape: "ellipse", label: "" });
 
@@ -185,13 +220,25 @@ export function CanvasStage({
     // select tool
     if (id) {
       const already = engine.selection.includes(id);
-      const next = e.shiftKey ? (already ? engine.selection.filter((s) => s !== id) : [...engine.selection, id]) : already ? engine.selection : [id];
+      const next = e.shiftKey
+        ? already
+          ? engine.selection.filter((s) => s !== id)
+          : [...engine.selection, id]
+        : already
+          ? engine.selection
+          : [id];
       engine.setSelection(next);
       const handle = (e.target as Element).getAttribute("data-handle");
       const origin: Record<string, { x: number; y: number; w?: number; h?: number }> = {};
       for (const el of engine.elements)
         if (next.includes(el.id))
-          origin[el.id] = { x: el.x, y: el.y, ...(el.kind !== "stroke" && el.kind !== "connector" ? { w: el.width, h: el.height } : {}) };
+          origin[el.id] = {
+            x: el.x,
+            y: el.y,
+            ...(el.kind !== "stroke" && el.kind !== "connector"
+              ? { w: el.width, h: el.height }
+              : {}),
+          };
       drag.current = { mode: handle ? "resize" : "move", start: p, origin };
       (e.currentTarget as Element).setPointerCapture(e.pointerId);
     } else {
@@ -208,7 +255,11 @@ export function CanvasStage({
 
     if (drag.current.mode === "pan" && drag.current.vp) {
       const vp = drag.current.vp;
-      setViewport({ ...vp, x: vp.x + (e.clientX - drag.current.start.x), y: vp.y + (e.clientY - drag.current.start.y) });
+      setViewport({
+        ...vp,
+        x: vp.x + (e.clientX - drag.current.start.x),
+        y: vp.y + (e.clientY - drag.current.start.y),
+      });
       return;
     }
     if (draft) {
@@ -221,14 +272,23 @@ export function CanvasStage({
     }
     if (drag.current.mode === "marquee") {
       const s = drag.current.start;
-      setMarquee({ x: Math.min(s.x, p.x), y: Math.min(s.y, p.y), w: Math.abs(p.x - s.x), h: Math.abs(p.y - s.y) });
+      setMarquee({
+        x: Math.min(s.x, p.x),
+        y: Math.min(s.y, p.y),
+        w: Math.abs(p.x - s.x),
+        h: Math.abs(p.y - s.y),
+      });
       return;
     }
     if (drag.current.mode === "move") {
       const dx = p.x - drag.current.start.x;
       const dy = p.y - drag.current.start.y;
       for (const [id, o] of Object.entries(drag.current.origin))
-        engine.update(id, { x: snap(o.x + dx, snapToGrid), y: snap(o.y + dy, snapToGrid) }, { transient: true });
+        engine.update(
+          id,
+          { x: snap(o.x + dx, snapToGrid), y: snap(o.y + dy, snapToGrid) },
+          { transient: true },
+        );
       return;
     }
     if (drag.current.mode === "resize") {
@@ -238,7 +298,10 @@ export function CanvasStage({
         if (o.w !== undefined && o.h !== undefined)
           engine.update(
             id,
-            { width: Math.max(60, snap(o.w + dx, snapToGrid)), height: Math.max(32, snap(o.h + dy, snapToGrid)) } as Partial<CanvasElement>,
+            {
+              width: Math.max(60, snap(o.w + dx, snapToGrid)),
+              height: Math.max(32, snap(o.h + dy, snapToGrid)),
+            } as Partial<CanvasElement>,
             { transient: true },
           );
     }
@@ -251,7 +314,13 @@ export function CanvasStage({
     }
     if (marquee) {
       const hits = boxes
-        .filter((b) => b.x >= marquee.x && b.y >= marquee.y && b.x + b.width <= marquee.x + marquee.w && b.y + b.height <= marquee.y + marquee.h)
+        .filter(
+          (b) =>
+            b.x >= marquee.x &&
+            b.y >= marquee.y &&
+            b.x + b.width <= marquee.x + marquee.w &&
+            b.y + b.height <= marquee.y + marquee.h,
+        )
         .map((b) => b.id);
       engine.setSelection(hits);
       setMarquee(null);
@@ -269,7 +338,11 @@ export function CanvasStage({
         const scale = Math.min(3, Math.max(0.2, vp.scale * factor));
         const mx = e.clientX - rect.left;
         const my = e.clientY - rect.top;
-        return { scale, x: mx - ((mx - vp.x) / vp.scale) * scale, y: my - ((my - vp.y) / vp.scale) * scale };
+        return {
+          scale,
+          x: mx - ((mx - vp.x) / vp.scale) * scale,
+          y: my - ((my - vp.y) / vp.scale) * scale,
+        };
       });
     } else {
       setViewport((vp) => ({ ...vp, x: vp.x - e.deltaX, y: vp.y - e.deltaY }));
@@ -284,7 +357,11 @@ export function CanvasStage({
       const mod = e.metaKey || e.ctrlKey;
       if (mod && e.key.toLowerCase() === "z") {
         e.preventDefault();
-        e.shiftKey ? engine.redo() : engine.undo();
+        if (e.shiftKey) {
+          engine.redo();
+        } else {
+          engine.undo();
+        }
       } else if (mod && e.key.toLowerCase() === "d") {
         e.preventDefault();
         engine.duplicate(engine.selection);
@@ -297,7 +374,18 @@ export function CanvasStage({
         engine.setSelection([]);
         setPendingConnector(null);
       } else if (!mod) {
-        const map: Record<string, Tool> = { v: "select", h: "pan", p: "pen", m: "highlighter", e: "eraser", t: "text", n: "sticky", c: "connector", r: "rect", o: "ellipse" };
+        const map: Record<string, Tool> = {
+          v: "select",
+          h: "pan",
+          p: "pen",
+          m: "highlighter",
+          e: "eraser",
+          t: "text",
+          n: "sticky",
+          c: "connector",
+          r: "rect",
+          o: "ellipse",
+        };
         const next = map[e.key.toLowerCase()];
         if (next) setTool(next);
       }
@@ -318,11 +406,18 @@ export function CanvasStage({
     else if (c.style === "curved") {
       const mx = (pa.x + pb.x) / 2;
       d = `M ${pa.x} ${pa.y} C ${mx} ${pa.y}, ${mx} ${pb.y}, ${pb.x} ${pb.y}`;
-    } else d = `M ${pa.x} ${pa.y} L ${(pa.x + pb.x) / 2} ${pa.y} L ${(pa.x + pb.x) / 2} ${pb.y} L ${pb.x} ${pb.y}`;
+    } else
+      d = `M ${pa.x} ${pa.y} L ${(pa.x + pb.x) / 2} ${pa.y} L ${(pa.x + pb.x) / 2} ${pb.y} L ${pb.x} ${pb.y}`;
     const selected = engine.selection.includes(c.id);
     return (
       <g key={c.id} data-el-id={c.id}>
-        <path d={d} fill="none" stroke="transparent" strokeWidth={14} style={{ cursor: "pointer" }} />
+        <path
+          d={d}
+          fill="none"
+          stroke="transparent"
+          strokeWidth={14}
+          style={{ cursor: "pointer" }}
+        />
         <path
           d={d}
           fill="none"
@@ -353,7 +448,11 @@ export function CanvasStage({
     const item = b.componentType ? PALETTE_INDEX[b.componentType] : undefined;
     const isSticky = b.kind === "sticky";
     const isText = b.kind === "text";
-    const fill = isSticky ? (b.color ?? "#f5a524") : isText ? "transparent" : "var(--color-surface)";
+    const fill = isSticky
+      ? (b.color ?? "#f5a524")
+      : isText
+        ? "transparent"
+        : "var(--color-surface)";
     return (
       <g key={b.id} data-el-id={b.id} style={{ cursor: readOnly ? "default" : "move" }}>
         {b.shape === "ellipse" ? (
@@ -375,12 +474,24 @@ export function CanvasStage({
             rx={b.componentType === "boundary" ? 12 : isSticky ? 4 : 10}
             fill={b.componentType === "boundary" ? "transparent" : fill}
             fillOpacity={isSticky ? 0.9 : 1}
-            stroke={selected ? "var(--color-primary)" : b.componentType === "boundary" ? "var(--color-accent)" : "var(--color-border)"}
+            stroke={
+              selected
+                ? "var(--color-primary)"
+                : b.componentType === "boundary"
+                  ? "var(--color-accent)"
+                  : "var(--color-border)"
+            }
             strokeDasharray={b.componentType === "boundary" ? "10 6" : undefined}
             strokeWidth={selected ? 2 : 1.5}
           />
         )}
-        <foreignObject x={b.x} y={b.y} width={b.width} height={b.height} style={{ pointerEvents: editing === b.id ? "auto" : "none" }}>
+        <foreignObject
+          x={b.x}
+          y={b.y}
+          width={b.width}
+          height={b.height}
+          style={{ pointerEvents: editing === b.id ? "auto" : "none" }}
+        >
           <div
             className={`flex size-full flex-col items-center justify-center gap-1 px-2 text-center ${isSticky ? "text-[#20242c]" : "text-surface-foreground"}`}
           >
@@ -399,9 +510,15 @@ export function CanvasStage({
                 className="w-full rounded bg-background/70 px-1 text-center text-[13px] outline-none"
               />
             ) : (
-              <span className={`text-[13px] font-medium leading-tight ${isText ? "text-base" : ""}`}>{b.label}</span>
+              <span
+                className={`text-[13px] font-medium leading-tight ${isText ? "text-base" : ""}`}
+              >
+                {b.label}
+              </span>
             )}
-            {b.description ? <span className="text-[11px] text-muted-foreground">{b.description}</span> : null}
+            {b.description ? (
+              <span className="text-[11px] text-muted-foreground">{b.description}</span>
+            ) : null}
           </div>
         </foreignObject>
         {selected && !readOnly ? (
@@ -421,7 +538,8 @@ export function CanvasStage({
 
   const strokePath = (s: StrokeElement) => {
     let d = "";
-    for (let i = 0; i < s.points.length; i += 2) d += `${i === 0 ? "M" : "L"} ${s.points[i]} ${s.points[i + 1]} `;
+    for (let i = 0; i < s.points.length; i += 2)
+      d += `${i === 0 ? "M" : "L"} ${s.points[i]} ${s.points[i + 1]} `;
     return d;
   };
 
@@ -456,12 +574,34 @@ export function CanvasStage({
     >
       <defs>
         <pattern id="grid" width={GRID} height={GRID} patternUnits="userSpaceOnUse">
-          <path d={`M ${GRID} 0 L 0 0 0 ${GRID}`} fill="none" stroke="var(--color-canvas-grid)" strokeWidth="1" opacity="0.4" />
+          <path
+            d={`M ${GRID} 0 L 0 0 0 ${GRID}`}
+            fill="none"
+            stroke="var(--color-canvas-grid)"
+            strokeWidth="1"
+            opacity="0.4"
+          />
         </pattern>
-        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <marker
+          id="arrow"
+          viewBox="0 0 10 10"
+          refX="9"
+          refY="5"
+          markerWidth="7"
+          markerHeight="7"
+          orient="auto-start-reverse"
+        >
           <path d="M 0 0 L 10 5 L 0 10 z" fill="#8fa3bf" />
         </marker>
-        <marker id="arrow-start" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+        <marker
+          id="arrow-start"
+          viewBox="0 0 10 10"
+          refX="1"
+          refY="5"
+          markerWidth="7"
+          markerHeight="7"
+          orient="auto"
+        >
           <path d="M 10 0 L 0 5 L 10 10 z" fill="#8fa3bf" />
         </marker>
       </defs>
@@ -523,7 +663,14 @@ export function CanvasStage({
               .map((p) => (
                 <g key={p.id} transform={`translate(${p.cursor!.x} ${p.cursor!.y})`}>
                   <path d="M 0 0 L 0 14 L 4 11 L 7 17 L 10 15 L 7 9 L 12 9 Z" fill={p.color} />
-                  <rect x={12} y={12} width={p.display_name.length * 7 + 12} height={18} rx={4} fill={p.color} />
+                  <rect
+                    x={12}
+                    y={12}
+                    width={p.display_name.length * 7 + 12}
+                    height={18}
+                    rx={4}
+                    fill={p.color}
+                  />
                   <text x={18} y={25} fontSize={11} fill="#10161f">
                     {p.display_name}
                   </text>
@@ -536,5 +683,7 @@ export function CanvasStage({
 }
 
 function IconBadge({ icon, sticky }: { icon: string; sticky: boolean }) {
-  return <ComponentIcon name={icon} className={`size-4 ${sticky ? "text-[#20242c]" : "text-primary"}`} />;
+  return (
+    <ComponentIcon name={icon} className={`size-4 ${sticky ? "text-[#20242c]" : "text-primary"}`} />
+  );
 }

@@ -81,7 +81,13 @@ export class RealtimeClient {
   }
 
   sendPresence(cursor: { x: number; y: number } | null, selection: string[]) {
-    this.send({ type: "presence_update", protocol: 1, sessionId: this.sessionId, cursor, selection });
+    this.send({
+      type: "presence_update",
+      protocol: 1,
+      sessionId: this.sessionId,
+      cursor,
+      selection,
+    });
   }
 
   disconnect() {

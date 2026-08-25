@@ -1,4 +1,5 @@
 <!-- LOVABLE:BEGIN -->
+
 > [!IMPORTANT]
 > This project is connected to [Lovable](https://lovable.dev). Avoid rewriting
 > published git history — force pushing, or rebasing/amending/squashing commits
@@ -7,11 +8,13 @@
 >
 > Commits you push to the connected branch sync back to Lovable and show up in
 > the editor, so keep the branch in a working state.
+
 <!-- LOVABLE:END -->
+
 for backend, use uv for dependency management. a few useful commands:
 
 uv sync
 uv add <PACKAGE-NAME>
 uv run python <PYTHON-FILE>
 
-regularly commit code to git 
+regularly commit code to git

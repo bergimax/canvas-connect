@@ -144,8 +144,20 @@ export interface CanvasDocument {
 
 export type ClientMessage =
   | { type: "join_room"; protocol: 1; sessionId: string; token: string }
-  | { type: "document_update"; protocol: 1; sessionId: string; operationId: string; ops: CanvasOperation[] }
-  | { type: "presence_update"; protocol: 1; sessionId: string; cursor?: { x: number; y: number } | null; selection?: string[] }
+  | {
+      type: "document_update";
+      protocol: 1;
+      sessionId: string;
+      operationId: string;
+      ops: CanvasOperation[];
+    }
+  | {
+      type: "presence_update";
+      protocol: 1;
+      sessionId: string;
+      cursor?: { x: number; y: number } | null;
+      selection?: string[];
+    }
   | { type: "ping"; protocol: 1 };
 
 export type ServerMessage =

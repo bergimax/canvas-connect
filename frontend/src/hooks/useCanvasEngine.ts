@@ -54,7 +54,11 @@ export function useCanvasEngine(
       if (readOnly()) return;
       setElements((prev) => {
         if (!options?.transient) pushHistory(prev);
-        return prev.map((e) => (e.id === id ? ({ ...e, ...patch, updated_at: new Date().toISOString() } as CanvasElement) : e));
+        return prev.map((e) =>
+          e.id === id
+            ? ({ ...e, ...patch, updated_at: new Date().toISOString() } as CanvasElement)
+            : e,
+        );
       });
       emit([{ op: "update", id, patch }]);
     },
@@ -69,7 +73,10 @@ export function useCanvasEngine(
         return prev.filter(
           (e) =>
             !ids.includes(e.id) &&
-            !(e.kind === "connector" && (ids.includes(e.from.elementId ?? "") || ids.includes(e.to.elementId ?? ""))),
+            !(
+              e.kind === "connector" &&
+              (ids.includes(e.from.elementId ?? "") || ids.includes(e.to.elementId ?? ""))
+            ),
         );
       });
       setSelection([]);
@@ -95,8 +102,10 @@ export function useCanvasEngine(
     setElements((prev) => {
       let next = prev;
       for (const op of ops) {
-        if (op.op === "add") next = next.some((e) => e.id === op.element.id) ? next : [...next, op.element];
-        else if (op.op === "update") next = next.map((e) => (e.id === op.id ? ({ ...e, ...op.patch } as CanvasElement) : e));
+        if (op.op === "add")
+          next = next.some((e) => e.id === op.element.id) ? next : [...next, op.element];
+        else if (op.op === "update")
+          next = next.map((e) => (e.id === op.id ? ({ ...e, ...op.patch } as CanvasElement) : e));
         else if (op.op === "delete") next = next.filter((e) => e.id !== op.id);
         else next = [];
       }
@@ -143,7 +152,9 @@ export function useCanvasEngine(
         pushHistory(prev);
         const copies = prev
           .filter((e) => ids.includes(e.id))
-          .map((e) => ({ ...e, id: crypto.randomUUID(), x: e.x + 24, y: e.y + 24 }) as CanvasElement);
+          .map(
+            (e) => ({ ...e, id: crypto.randomUUID(), x: e.x + 24, y: e.y + 24 }) as CanvasElement,
+          );
         emit(copies.map((element) => ({ op: "add", element }) as CanvasOperation));
         return [...prev, ...copies];
       });

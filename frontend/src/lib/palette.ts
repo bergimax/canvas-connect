@@ -13,7 +13,13 @@ export interface PaletteCategory {
   items: PaletteItem[];
 }
 
-const box = (type: ComponentType, label: string, icon: string, width = 168, height = 84): PaletteItem => ({
+const box = (
+  type: ComponentType,
+  label: string,
+  icon: string,
+  width = 168,
+  height = 84,
+): PaletteItem => ({
   type,
   label,
   icon,

@@ -48,7 +48,11 @@ export function Toolbar({
   disabled: boolean;
 }) {
   return (
-    <div className="flex w-14 flex-col items-center gap-1 border-r border-border bg-sidebar py-3" role="toolbar" aria-label="Canvas tools">
+    <div
+      className="flex w-14 flex-col items-center gap-1 border-r border-border bg-sidebar py-3"
+      role="toolbar"
+      aria-label="Canvas tools"
+    >
       {TOOLS.map(({ tool: t, label, icon: Icon, shortcut }) => (
         <Tooltip key={t}>
           <TooltipTrigger asChild>

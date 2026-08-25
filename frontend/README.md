@@ -1,6 +1,6 @@
 # Canvas Connect
 
-Voglio creare un applicazione. Crea il frontend di questa applicazione, il backend lo farò io successivamente, l'unic cosa e che tu devi predisporre le  calls. System Design Interview Platform
+Voglio creare un applicazione. Crea il frontend di questa applicazione, il backend lo farò io successivamente, l'unic cosa e che tu devi predisporre le calls. System Design Interview Platform
 
 Full product and technical specification: [docs/specs.md](../docs/specs.md).
 
