@@ -1,0 +1,122 @@
+name: Promote to Production
+
+# Manual-only: there is no automatic path from a push to main into
+# production (see .github/workflows/ci-cd.yml, which auto-deploys dev on
+# every push to main and pushes the tested image to both the dev and prod
+# ECR repos, but never touches the prod EC2 instance).
+#
+# By default this promotes whatever image is *currently deployed in dev*
+# (read from dev's "last known-good" SSM parameter) — so "promote" means
+# "take what's live in dev right now and put it in prod", not "pick an
+# arbitrary commit". Only the deploy stage runs here: the image was
+# already built and pushed to both ECR repos back when it was deployed to
+# dev, so this workflow only ever pulls and runs it, never builds.
+#
+# To promote: Actions tab -> "Promote to Production" -> "Run workflow". The
+# optional `tag` input overrides the image tag to deploy, for the rare
+# case of re-promoting a specific older tag (e.g. re-applying a version
+# after a bad prod-only change) instead of dev's current one.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: >
+          Image tag to promote (must already exist in the prod ECR repo).
+          Leave empty (the normal case) to promote whatever tag is
+          currently deployed in dev.
+        required: false
+        type: string
+
+concurrency:
+  group: promote-to-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------
+  # Deploys the "canvas-connect-prod" EC2 instance provisioned by
+  # deploy/cloudformation.yml (Environment=prod) to the resolved tag over
+  # SSM (deploy/deploy.sh — pull-only, never builds), health-checks it, and
+  # automatically rolls back to the last known-good tag (tracked in SSM
+  # Parameter Store, namespaced /canvas-connect/prod/*) if the health
+  # check fails.
+  #
+  # Gated by the "production" GitHub Environment's protection rules —
+  # configure a required reviewer on it (repo Settings > Environments >
+  # production > Required reviewers) so a real approval is needed before
+  # this job's steps run.
+  #
+  # AWS isn't provisioned yet, so this job fails fast with a clear error
+  # if the required "production" GitHub Environment secrets/variables
+  # aren't set (unlike ci-cd.yml's deploy-dev, which no-ops quietly —
+  # a promotion someone deliberately triggered should never look like it
+  # silently succeeded):
+  #   Secrets:
+  #     AWS_ROLE_ARN        - IAM role ARN GitHub OIDC assumes (see below)
+  #   Variables:
+  #     AWS_REGION           - e.g. eu-west-1
+  #     DEPLOY_HEALTH_URL     - the prod app's /health endpoint to check
+  #                             after deploy, e.g.
+  #                             https://<prod-domain>/health — without it
+  #                             the deploy is unverified and rollback
+  #                             can't trigger, since there's nothing to
+  #                             detect failure with
+  #
+  # The IAM role trust policy should scope the OIDC subject to this repo,
+  # e.g.:
+  #   repo:<org>/<repo>:ref:refs/heads/main
+  # and the role needs permission for:
+  #   ec2:DescribeInstances, ssm:SendCommand, ssm:GetCommandInvocation,
+  #   ssm:GetParameter, ssm:PutParameter (on parameter
+  #   /canvas-connect/prod/*), ecr:GetAuthorizationToken,
+  #   ecr:BatchGetImage (on the canvas-connect-prod ECR repository) — PLUS
+  #   ssm:GetParameter on /canvas-connect/dev/last-good-tag specifically
+  #   (read-only, that one parameter only), needed to look up what's
+  #   currently deployed in dev when the `tag` input is left empty.
+  # ---------------------------------------------------------------------
+
+  deploy-production:
+    name: Deploy to production
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check AWS deploy is configured
+        run: |
+          if [ -z "${{ secrets.AWS_ROLE_ARN }}" ] || [ -z "${{ vars.AWS_REGION }}" ]; then
+            echo "::error::AWS_ROLE_ARN secret and/or AWS_REGION variable not set on the 'production' GitHub Environment — nothing to promote to."
+            exit 1
+          fi
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Resolve image tag to promote
+        id: resolve
+        run: |
+          set -euo pipefail
+          tag="${{ inputs.tag }}"
+          if [ -z "$tag" ]; then
+            tag=$(aws ssm get-parameter --name "/canvas-connect/dev/last-good-tag" --query "Parameter.Value" --output text)
+            echo "No tag input given — promoting dev's currently deployed tag: $tag"
+          else
+            echo "Promoting explicitly given tag: $tag"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy, health-check, and roll back on failure
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          DEPLOY_HEALTH_URL: ${{ vars.DEPLOY_HEALTH_URL }}
+          ENVIRONMENT: prod
+          IMAGE_TAG: ${{ steps.resolve.outputs.tag }}
+        run: bash deploy/deploy.sh

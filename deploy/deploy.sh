@@ -1,30 +1,40 @@
 #!/usr/bin/env bash
-# Redeploys the "canvas-connect" EC2 instance (see cloudformation.yml) to
-# the image CI just built and pushed to ECR (job build-and-push in
+# Redeploys the "canvas-connect-${ENVIRONMENT}" EC2 instance (see
+# cloudformation.yml) to the image the build stage already built and
+# pushed to that environment's ECR repo (job "build" in
 # .github/workflows/ci-cd.yml), health-checks it, and automatically rolls
-# back to the last known-good image if the health check fails. Talks to the
-# instance over SSM only (no SSH).
+# back to the last known-good image if the health check fails. This is a
+# pull-only deploy — it never builds an image, just pulls the given tag
+# and restarts the stack. Talks to the instance over SSM only (no SSH).
 #
-# Required env vars: AWS_REGION, GITHUB_SHA
+# Required env vars: AWS_REGION, IMAGE_TAG, ENVIRONMENT (dev or prod —
+#           selects which independent stack/instance/ECR repo to target)
 # Optional: DEPLOY_HEALTH_URL — health check (and therefore rollback) is
 #           skipped, with a warning, if it's not set.
 set -euo pipefail
 
 : "${AWS_REGION:?}"
-: "${GITHUB_SHA:?}"
+: "${IMAGE_TAG:?}"
+: "${ENVIRONMENT:?}"
 
-LAST_GOOD_PARAM="/canvas-connect/last-good-sha"
+case "$ENVIRONMENT" in
+  dev|prod) ;;
+  *) echo "::error::ENVIRONMENT must be 'dev' or 'prod', got '$ENVIRONMENT'"; exit 1 ;;
+esac
+
+STACK_NAME="canvas-connect-${ENVIRONMENT}"
+LAST_GOOD_PARAM="/canvas-connect/${ENVIRONMENT}/last-good-tag"
 
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-ECR_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/canvas-connect"
+ECR_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${STACK_NAME}"
 ECR_REGISTRY="${ECR_URI%/*}"
 
 INSTANCE_ID=$(aws ec2 describe-instances \
-  --filters "Name=tag:Name,Values=canvas-connect" "Name=instance-state-name,Values=running" \
+  --filters "Name=tag:Name,Values=${STACK_NAME}" "Name=instance-state-name,Values=running" \
   --query "Reservations[0].Instances[0].InstanceId" --output text)
 
 if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "None" ]; then
-  echo "::error::No running 'canvas-connect' EC2 instance found — has deploy/cloudformation.yml been deployed?"
+  echo "::error::No running '${STACK_NAME}' EC2 instance found — has deploy/cloudformation.yml been deployed for Environment=${ENVIRONMENT}?"
   exit 1
 fi
 echo "Target instance: $INSTANCE_ID"
@@ -57,8 +67,10 @@ run_on_instance() {
   [ "$(echo "$result" | jq -r '.Status')" = "Success" ]
 }
 
-# Only pulls config files that matter for running a prebuilt image (not the
-# whole app source — the image already has it baked in).
+# Pulls the already-built image for this tag and restarts the stack with
+# it — no build ever happens here. Also pulls config files that matter for
+# running a prebuilt image (not the whole app source — the image already
+# has it baked in).
 deploy_tag() {
   local tag="$1"
   echo "Deploying image tag: $tag"
@@ -90,18 +102,18 @@ health_check() {
 
 LAST_GOOD=$(aws ssm get-parameter --name "$LAST_GOOD_PARAM" --query "Parameter.Value" --output text 2>/dev/null || echo "")
 
-if ! deploy_tag "$GITHUB_SHA"; then
+if ! deploy_tag "$IMAGE_TAG"; then
   echo "::error::Deploy command failed on the instance (see output above) — nothing was health-checked or rolled back."
   exit 1
 fi
 
 if health_check; then
-  aws ssm put-parameter --name "$LAST_GOOD_PARAM" --value "$GITHUB_SHA" --type String --overwrite >/dev/null
-  echo "Deploy of $GITHUB_SHA succeeded and is healthy."
+  aws ssm put-parameter --name "$LAST_GOOD_PARAM" --value "$IMAGE_TAG" --type String --overwrite >/dev/null
+  echo "Deploy of $IMAGE_TAG succeeded and is healthy."
   exit 0
 fi
 
-echo "::error::Health check failed after deploying $GITHUB_SHA."
+echo "::error::Health check failed after deploying $IMAGE_TAG."
 
 if [ -z "$LAST_GOOD" ] || [ "$LAST_GOOD" = "None" ]; then
   echo "::error::No previous known-good deploy recorded (first-ever deploy?) — nothing to roll back to. Manual intervention needed."
@@ -110,7 +122,7 @@ fi
 
 echo "Rolling back to last known-good image: $LAST_GOOD"
 if deploy_tag "$LAST_GOOD" && health_check; then
-  echo "::warning::Rolled back to $LAST_GOOD after $GITHUB_SHA failed its health check."
+  echo "::warning::Rolled back to $LAST_GOOD after $IMAGE_TAG failed its health check."
 else
   echo "::error::Rollback to $LAST_GOOD also failed — manual intervention needed."
 fi

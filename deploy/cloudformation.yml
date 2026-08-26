@@ -1,10 +1,26 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   Canvas Connect - single EC2 instance running the app via Docker Compose
-  (app + Postgres + Caddy reverse proxy), built from the public GitHub repo
-  at boot. Access is via SSM Session Manager only (no SSH port open).
+  (app + Postgres + Caddy reverse proxy). The instance never builds an
+  image itself - it only pulls a prebuilt, already-tested tag from its own
+  ECR repo (at boot, and on every deploy/deploy.sh run). Access is via SSM
+  Session Manager only (no SSH port open).
+
+  Deployed once per environment (dev, prod) as two fully independent
+  stacks in the same AWS account - each gets its own EC2 instance, ECR
+  repository, security group, and Elastic IP, distinguished by the
+  Environment parameter. Nothing is shared between stacks, so either can
+  be created, updated, or deleted without touching the other.
 
 Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [dev, prod]
+    Description: >
+      Which environment this stack is. Suffixes every named resource
+      (ECR repo, EC2 Name tag, SSM parameter namespace used by
+      deploy/deploy.sh) so the dev and prod stacks never collide.
+
   VpcId:
     Type: AWS::EC2::VPC::Id
     Description: VPC to deploy into.
@@ -18,9 +34,9 @@ Parameters:
     Default: t3.small
     AllowedValues: [t3.small, t3.medium, t3.large]
     Description: >
-      t3.small (2GB RAM) works but the frontend build at boot is memory-heavy;
-      a 1GB swapfile is created as a safety net. Use t3.medium if the build
-      fails or is too slow.
+      t3.small (2GB RAM) is enough - the instance only ever pulls and runs
+      a prebuilt image, it never builds one. Use t3.medium/large only if
+      running the app + Postgres + Caddy together needs more headroom.
 
   DBPassword:
     Type: String
@@ -54,16 +70,17 @@ Parameters:
     Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
 
 Resources:
-  # Holds the app image CI builds and tests once (backend + frontend
-  # already verified by the test jobs, plus integration/e2e against the
-  # real compose stack) and pushes on every deploy to main, tagged with
-  # the commit sha. The EC2 instance then just pulls a tag instead of
-  # rebuilding from source on every deploy - keeps what's running
+  # Holds the app image the CI build stage builds and tests once (backend
+  # + frontend already verified by the test jobs, plus integration/e2e
+  # against the real compose stack) and pushes on every push to main,
+  # tagged YYYYMMDD-HHMMSS-<short sha> plus a rolling "latest". The EC2
+  # instance only ever pulls a tag (at boot, and on every deploy stage run)
+  # - it never builds from source itself, so what's running is always
   # identical, bit-for-bit, to what CI actually tested.
   EcrRepository:
     Type: AWS::ECR::Repository
     Properties:
-      RepositoryName: canvas-connect
+      RepositoryName: !Sub canvas-connect-${Environment}
       ImageScanningConfiguration:
         ScanOnPush: true
       LifecyclePolicy:
@@ -96,7 +113,7 @@ Resources:
   InstanceSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Canvas Connect app - allow HTTP/HTTPS in, no SSH (SSM only)
+      GroupDescription: !Sub "Canvas Connect (${Environment}) app - allow HTTP/HTTPS in, no SSH (SSM only)"
       VpcId: !Ref VpcId
       SecurityGroupIngress:
         - IpProtocol: tcp
@@ -119,7 +136,9 @@ Resources:
       IamInstanceProfile: !Ref InstanceProfile
       Tags:
         - Key: Name
-          Value: canvas-connect
+          Value: !Sub canvas-connect-${Environment}
+        - Key: Environment
+          Value: !Ref Environment
       BlockDeviceMappings:
         - DeviceName: /dev/xvda
           Ebs:
@@ -136,16 +155,6 @@ Resources:
         Fn::Base64: !Sub |
           #!/bin/bash
           set -euxo pipefail
-
-          # Small safety net: the frontend build (npm ci + vite build) run
-          # below is memory-heavy relative to a t3.small.
-          if [ ! -f /swapfile ]; then
-            fallocate -l 1G /swapfile
-            chmod 600 /swapfile
-            mkswap /swapfile
-            swapon /swapfile
-            echo '/swapfile none swap sw 0 0' >> /etc/fstab
-          fi
 
           dnf update -y
           dnf install -y docker git
@@ -174,7 +183,23 @@ Resources:
           FRONTEND_BASE_URL=${!frontend_base_url}
           ENVEOF
 
-          docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+          # Pull-only, same as deploy/deploy.sh — never build here. Only the
+          # CI build stage (.github/workflows/ci-cd.yml) builds images; this
+          # instance always runs a prebuilt tag from its own ECR repo. If
+          # this is a brand-new environment and the build stage hasn't
+          # pushed anything yet, "latest" won't exist and the pull below
+          # fails cleanly — the app simply stays down until the first real
+          # deploy (deploy-dev / promote-to-production) runs, which pulls
+          # and starts it the same way.
+          region=$(curl -fsSL http://169.254.169.254/latest/meta-data/placement/region)
+          account_id=$(aws sts get-caller-identity --query Account --output text)
+          ecr_uri="${!account_id}.dkr.ecr.${!region}.amazonaws.com/canvas-connect-${Environment}"
+          aws ecr get-login-password --region "${!region}" | docker login --username AWS --password-stdin "${!ecr_uri%/*}"
+          if docker pull "${!ecr_uri}:latest"; then
+            APP_IMAGE="${!ecr_uri}:latest" docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+          else
+            echo "No 'latest' image in canvas-connect-${Environment} yet — app will start once the build stage pushes one and a deploy runs." >&2
+          fi
 
   ElasticIP:
     Type: AWS::EC2::EIP
@@ -206,8 +231,8 @@ Outputs:
 
   EcrRepositoryUri:
     Description: >
-      Where CI pushes built images (see .github/workflows/ci-cd.yml). The
-      deploy job derives this same URI itself from account id + region +
-      the fixed "canvas-connect" repository name, so nothing here needs to
-      be copied into repo secrets/variables.
+      Where CI pushes built images for this environment (see
+      .github/workflows/ci-cd.yml). The deploy job derives this same URI
+      itself from account id + region + "canvas-connect-<environment>",
+      so nothing here needs to be copied into repo secrets/variables.
     Value: !GetAtt EcrRepository.RepositoryUri

@@ -114,20 +114,30 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-  # ---------------------------------------------------------------------
-  # Build once, tag with the commit sha, push to ECR. This is the same
-  # image the tests above already exercised the compose stack with is
-  # what actually gets deployed below — the EC2 instance pulls this tag
-  # rather than rebuilding from source on every deploy.
+  # =======================================================================
+  # BUILD STAGE — builds the image exactly once and pushes it, tagged, to
+  # BOTH the dev and prod ECR repos (deploy/cloudformation.yml provisions
+  # one independent stack per environment — see its top comment). Pushing
+  # to both means any commit that lands on main is immediately promotable
+  # to production later via promote-to-production.yml, with no rebuild and
+  # no re-copy step. The deploy stage below (and promote-to-production.yml)
+  # never builds anything — they only ever pull a tag this stage already
+  # pushed, so what runs anywhere is bit-for-bit what CI actually tested.
   #
-  # AWS isn't provisioned yet, so — like the deploy job below — this job
+  # Tag format: YYYYMMDD-HHMMSS-<7-char short sha> (e.g.
+  # 20260818-163457-83242da), computed at build time — sortable, human-
+  # readable, and still traceable back to the exact commit. "latest" is
+  # also pushed, purely for deploy/cloudformation.yml's EC2 boot bootstrap
+  # (see its UserData) to have something to pull on a brand-new instance.
+  #
+  # AWS isn't provisioned yet, so — like the deploy stage below — this job
   # no-ops cleanly instead of failing until the required repo
-  # secrets/variables exist. See the deploy job's comment for the full list
-  # and the IAM permissions each job needs.
-  # ---------------------------------------------------------------------
+  # secrets/variables exist. See the deploy-dev job's comment for the full
+  # list and the IAM permissions each job needs.
+  # =======================================================================
 
-  build-and-push:
-    name: Build & push image to ECR
+  build:
+    name: "Build stage: build & push image to ECR"
     runs-on: ubuntu-latest
     needs: [integration-and-e2e]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
@@ -136,8 +146,17 @@ jobs:
       contents: read
     outputs:
       ready: ${{ steps.aws_ready.outputs.ready }}
+      image_tag: ${{ steps.tag.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Compute image tag
+        id: tag
+        run: |
+          set -euo pipefail
+          ts=$(date -u +%Y%m%d-%H%M%S)
+          short_sha=$(echo "${{ github.sha }}" | cut -c1-7)
+          echo "tag=${ts}-${short_sha}" >> "$GITHUB_OUTPUT"
 
       - name: Check AWS deploy is configured
         id: aws_ready
@@ -161,57 +180,71 @@ jobs:
         id: ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build and push
+      - name: Build and push to both environments' ECR repos
         if: steps.aws_ready.outputs.ready == 'true'
+        env:
+          IMAGE_TAG: ${{ steps.tag.outputs.tag }}
         run: |
           set -euo pipefail
-          IMAGE="${{ steps.ecr.outputs.registry }}/canvas-connect"
-          docker build -t "$IMAGE:${{ github.sha }}" -t "$IMAGE:latest" .
-          docker push "$IMAGE:${{ github.sha }}"
-          docker push "$IMAGE:latest"
+          REGISTRY="${{ steps.ecr.outputs.registry }}"
+          BUILD_TAG="$REGISTRY/canvas-connect-dev:${IMAGE_TAG}"
+          docker build -t "$BUILD_TAG" .
+          for repo in canvas-connect-dev canvas-connect-prod; do
+            docker tag "$BUILD_TAG" "$REGISTRY/$repo:${IMAGE_TAG}"
+            docker tag "$BUILD_TAG" "$REGISTRY/$repo:latest"
+            docker push "$REGISTRY/$repo:${IMAGE_TAG}"
+            docker push "$REGISTRY/$repo:latest"
+          done
 
-  # ---------------------------------------------------------------------
-  # Deploy to AWS. Authenticates via GitHub OIDC (no long-lived AWS keys)
-  # and redeploys the EC2 instance provisioned by deploy/cloudformation.yml
-  # (see deploy/deploy.sh) by asking it, over SSM (no SSH), to pull the
-  # image build-and-push just pushed and restart the Docker Compose stack,
-  # then confirms the app is actually up by polling its health endpoint —
-  # automatically rolling back to the last known-good image if it isn't.
+  # =======================================================================
+  # DEPLOY STAGE (dev) — pulls the tag the build stage just pushed and
+  # restarts the dev instance with it; never builds anything itself.
+  # Authenticates via GitHub OIDC (no long-lived AWS keys) and redeploys
+  # the "canvas-connect-dev" EC2 instance provisioned by
+  # deploy/cloudformation.yml (Environment=dev) (see deploy/deploy.sh) by
+  # asking it, over SSM (no SSH), to pull that exact tag and restart the
+  # Docker Compose stack, then confirms the app is actually up by polling
+  # its health endpoint — automatically rolling back to the last known-good
+  # tag if the health check fails.
+  #
+  # Runs automatically on every push to main. Deploying the same tag to
+  # production is a separate, manual step — see promote-to-production.yml,
+  # which pulls whatever tag is currently deployed here in dev.
   #
   # AWS isn't provisioned yet, so this job is written to no-op cleanly
-  # instead of failing until the required repo secrets/variables exist:
+  # instead of failing until the required "development" GitHub Environment
+  # secrets/variables exist:
   #   Secrets:
   #     AWS_ROLE_ARN        - IAM role ARN GitHub OIDC assumes (see below)
   #   Variables:
   #     AWS_REGION           - e.g. eu-west-1
-  #     DEPLOY_HEALTH_URL     - the app's /health endpoint to check after
-  #                             deploy, e.g. http://<elastic-ip>/health or
-  #                             https://<domain>/health — without it the
-  #                             deploy is unverified and rollback can't
-  #                             trigger, since there's nothing to detect
-  #                             failure with
+  #     DEPLOY_HEALTH_URL     - the dev app's /health endpoint to check
+  #                             after deploy, e.g.
+  #                             http://<dev-elastic-ip>/health — without
+  #                             it the deploy is unverified and rollback
+  #                             can't trigger, since there's nothing to
+  #                             detect failure with
   #
-  # Once deploy/cloudformation.yml has been deployed and those are set,
-  # this job starts deploying for real with no further changes needed.
+  # Once deploy/cloudformation.yml has been deployed with Environment=dev
+  # and those are set on a "development" GitHub Environment, this job
+  # starts deploying for real with no further changes needed.
   #
   # The IAM role trust policy should scope the OIDC subject to this repo,
   # e.g.:
   #   repo:<org>/<repo>:ref:refs/heads/main
   # and the role needs permission for:
   #   ec2:DescribeInstances, ssm:SendCommand, ssm:GetCommandInvocation,
-  #   ssm:GetParameter, ssm:PutParameter (on parameter /canvas-connect/*),
-  #   ecr:GetAuthorizationToken, ecr:BatchCheckLayerAvailability,
-  #   ecr:PutImage, ecr:InitiateLayerUpload, ecr:UploadLayerPart,
-  #   ecr:CompleteLayerUpload, ecr:BatchGetImage (on the canvas-connect
-  #   ECR repository)
-  # ---------------------------------------------------------------------
+  #   ssm:GetParameter, ssm:PutParameter (on parameter
+  #   /canvas-connect/dev/*), ecr:GetAuthorizationToken,
+  #   ecr:BatchGetImage (on the canvas-connect-dev ECR repository)
+  # =======================================================================
 
-  deploy:
-    name: Deploy to AWS
+  deploy-dev:
+    name: "Deploy stage: deploy to dev"
     runs-on: ubuntu-latest
-    needs: [build-and-push]
-    if: needs.build-and-push.outputs.ready == 'true'
-    environment: production
+    needs: [build]
+    if: needs.build.outputs.ready == 'true'
+    environment: development
     permissions:
       id-token: write
       contents: read
@@ -228,4 +261,6 @@ jobs:
         env:
           AWS_REGION: ${{ vars.AWS_REGION }}
           DEPLOY_HEALTH_URL: ${{ vars.DEPLOY_HEALTH_URL }}
+          ENVIRONMENT: dev
+          IMAGE_TAG: ${{ needs.build.outputs.image_tag }}
         run: bash deploy/deploy.sh
