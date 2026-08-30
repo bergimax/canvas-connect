@@ -126,7 +126,9 @@ The same resource attributes tag four application metrics, all defined in `backe
 | `canvas_connect.canvas_elements.created` | counter | a canvas save introduces element ids not seen before |
 | `canvas_connect.component_creation.failures` | counter | a canvas save is rejected (forbidden role, disabled editing) or errors, tagged with `reason` |
 
-A local collector plus a place to view what it collects is included: [`observability/`](observability/) runs OpenTelemetry Collector + Prometheus + Loki + Tempo + Grafana as its own Compose project, with a pre-provisioned Grafana dashboard for the four metrics above, filterable by environment and version — see [`observability/README.md`](observability/README.md) for how to run it and connect the app stack to it.
+The same resource attributes also tag application logs: the `canvas_connect` logger (`get_logger()` in `backend/app/telemetry.py`) writes to stdout always, and via OTLP whenever a collector's configured — trace-correlated automatically, since every record emitted inside a request span carries that span's `trace_id`/`span_id`. `app/store.py`/`app/routers/canvas.py` log the same lifecycle events and failures the metrics above count.
+
+A local collector plus a place to view what it collects is included: [`observability/`](observability/) runs OpenTelemetry Collector + Prometheus + Loki + Tempo + Grafana as its own Compose project, with a pre-provisioned Grafana dashboard for the four metrics and the logs above, filterable by environment and version — see [`observability/README.md`](observability/README.md) for how to run it and connect the app stack to it.
 
 ## Deployment
 

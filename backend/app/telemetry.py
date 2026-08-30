@@ -1,29 +1,36 @@
-"""OpenTelemetry setup: tracing, plus a handful of application metrics.
+"""OpenTelemetry setup: tracing, application metrics, and application logs.
 
-Every span and metric data point is tagged with the same three resource
-attributes, so either can be filtered/grouped by exactly what's running:
-which service produced it (service.name), which stack it's running in
-(deployment.environment.name — "dev"/"prod", matching
-deploy/cloudformation.yml's Environment parameter), and which build
-(service.version — the CI image tag from .github/workflows/ci-cd.yml,
-threaded through as APP_VERSION; see docker-compose.yml).
+Every span, metric data point, and log record is tagged with the same
+three resource attributes, so any of them can be filtered/grouped by
+exactly what's running: which service produced it (service.name), which
+stack it's running in (deployment.environment.name — "dev"/"prod",
+matching deploy/cloudformation.yml's Environment parameter), and which
+build (service.version — the CI image tag from
+.github/workflows/ci-cd.yml, threaded through as APP_VERSION; see
+docker-compose.yml).
 
 Built once at import time (not lazily per create_app() call) so the
 providers below are safe to hand straight to instrument() and to the
-`add()` calls in store.py/routers without any get-meter/get-tracer
-ordering concerns.
+`add()`/`logger.info()` calls in store.py/routers without any
+get-meter/get-tracer/get-logger ordering concerns.
 """
 
 from __future__ import annotations
 
+import logging
 import os
 
 from fastapi import FastAPI
 from opentelemetry import metrics, trace
+from opentelemetry._logs import set_logger_provider
+from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
 from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.instrumentation.logging.handler import LoggingHandler
 from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
+from opentelemetry.sdk._logs import LoggerProvider
+from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
@@ -84,6 +91,35 @@ component_creation_failures = _meter.create_counter(
     unit="{failure}",
     description="Failed attempts to save/create canvas elements.",
 )
+
+# ------------------------------- application logs -------------------------------
+
+_logger_provider = LoggerProvider(resource=_resource)
+if _exporting:
+    _logger_provider.add_log_record_processor(BatchLogRecordProcessor(OTLPLogExporter()))
+set_logger_provider(_logger_provider)
+
+_otlp_log_handler = LoggingHandler(level=logging.NOTSET, logger_provider=_logger_provider)
+
+# All app logging goes through this one logger (children below propagate up
+# to it) rather than the root logger — root is left alone so we don't
+# collide with uvicorn's own logging config (its "uvicorn"/"uvicorn.access"
+# loggers already write formatted request logs to stdout independently).
+_app_logger = logging.getLogger("canvas_connect")
+_app_logger.setLevel(logging.INFO)
+_app_logger.propagate = False
+_app_logger.addHandler(logging.StreamHandler())  # always visible via `docker logs`
+_app_logger.addHandler(_otlp_log_handler)  # additionally shipped via OTLP when configured
+
+
+def get_logger(name: str) -> logging.Logger:
+    """A child of the "canvas_connect" logger — see above. LoggingHandler
+    automatically attaches the current span's trace_id/span_id to every
+    record, so a log line here is already correlated with the trace for
+    the same request without any extra wiring.
+    """
+    return logging.getLogger(f"canvas_connect.{name}")
+
 
 _sqlalchemy_instrumented = False
 

@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from .auth import TOKEN_TTL, TokenRecord, hash_password, new_token, now
 from .db import CanvasDocumentRow, GuestLinkRow, ParticipantRow, SessionRow, TokenRow, UserRow
 from .errors import ApiError
-from .telemetry import active_interview_participants, canvas_elements_created, interview_rooms_created
+from .telemetry import active_interview_participants, canvas_elements_created, get_logger, interview_rooms_created
 from .models import (
     BoxElement,
     ConnectorElement,
@@ -35,6 +35,8 @@ from .models import (
     StrokeElement,
     User,
 )
+
+logger = get_logger("store")
 
 PARTICIPANT_COLORS = [
     "#f97316",
@@ -294,6 +296,7 @@ class Store:
         self.session.commit()
         interview_rooms_created.add(1)
         active_interview_participants.add(1)
+        logger.info("Interview room created", extra={"session_id": session_id, "owner_user_id": owner.id})
         return _session_model(row)
 
     def update_session(self, session: InterviewSession, patch: dict) -> InterviewSession:
@@ -381,6 +384,7 @@ class Store:
         self.session.commit()
         interview_rooms_created.add(1)
         active_interview_participants.add(1)
+        logger.info("Interview room duplicated", extra={"session_id": new_id, "source_session_id": session.id})
         return _session_model(new_row)
 
     def remove_participant(self, session: InterviewSession, participant_id: str) -> None:
@@ -392,6 +396,7 @@ class Store:
         session_row.updated_at = now()
         self.session.commit()
         active_interview_participants.add(-1)
+        logger.info("Participant removed", extra={"session_id": session.id, "participant_id": participant_id})
 
     # ------------------------- permission checks -------------------------
     # Pure functions over the already-loaded Pydantic model — no DB access.
@@ -495,6 +500,10 @@ class Store:
 
         self.session.commit()
         active_interview_participants.add(1)
+        logger.info(
+            "Participant joined via guest link",
+            extra={"session_id": session.id, "participant_id": participant_row.id, "role": participant_row.role},
+        )
         return _participant_model(participant_row), _session_model(session_row)
 
     # ------------------------------ canvas ------------------------------
@@ -540,6 +549,9 @@ class Store:
         self.session.commit()
         if created_count:
             canvas_elements_created.add(created_count)
+            logger.info(
+                "Canvas elements created", extra={"session_id": session.id, "created_count": created_count}
+            )
         return _canvas_model(row)
 
     # ------------------------------- seed -------------------------------

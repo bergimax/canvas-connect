@@ -166,6 +166,29 @@
           "legendFormat": "{{reason}}"
         }
       ]
+    },
+    {
+      "id": 6,
+      "title": "Backend Logs",
+      "description": "Application logs (app/telemetry.py's \"canvas_connect\" logger), filtered by $environment / $version. deployment_environment_name/service_version arrive as Loki structured metadata (not indexed stream labels, to avoid per-trace cardinality), so they're filtered with a label-filter pipeline stage rather than inside the stream selector.",
+      "type": "logs",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 17 },
+      "options": {
+        "showTime": true,
+        "showLabels": false,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": false,
+        "sortOrder": "Descending",
+        "dedupStrategy": "none",
+        "enableLogDetails": true
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{service_name=\"canvas-connect-backend\"} | deployment_environment_name=~\"$environment\" | service_version=~\"$version\""
+        }
+      ]
     }
   ]
 }

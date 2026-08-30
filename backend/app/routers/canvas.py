@@ -4,9 +4,10 @@ from ..auth import TokenRecord, get_current_actor, get_store
 from ..errors import ApiError
 from ..models import CanvasDocument, CanvasGetResponse, Role, SavedAtResponse
 from ..store import Store
-from ..telemetry import component_creation_failures
+from ..telemetry import component_creation_failures, get_logger
 
 router = APIRouter(prefix="/v1/sessions/{id}/canvas", tags=["canvas"])
+logger = get_logger("canvas")
 
 
 @router.get("", response_model=CanvasGetResponse)
@@ -36,13 +37,22 @@ async def save_canvas(
     participant = store.require_participant(session, actor)
     if participant.role == Role.observer:
         component_creation_failures.add(1, {"reason": "observer_forbidden"})
+        logger.warning(
+            "Canvas save rejected: observer role",
+            extra={"session_id": id, "participant_id": participant.id, "reason": "observer_forbidden"},
+        )
         raise ApiError(403, "forbidden", "Observers cannot edit the canvas")
     if participant.role == Role.candidate and not session.candidate_editing_enabled:
         component_creation_failures.add(1, {"reason": "editing_disabled"})
+        logger.warning(
+            "Canvas save rejected: candidate editing disabled",
+            extra={"session_id": id, "participant_id": participant.id, "reason": "editing_disabled"},
+        )
         raise ApiError(403, "forbidden", "Candidate editing is disabled for this session")
     try:
         saved = store.save_canvas(session, body)
     except Exception:
         component_creation_failures.add(1, {"reason": "error"})
+        logger.exception("Canvas save failed", extra={"session_id": id, "participant_id": participant.id})
         raise
     return SavedAtResponse(saved_at=saved.updated_at)

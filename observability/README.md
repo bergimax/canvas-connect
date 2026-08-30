@@ -29,19 +29,21 @@ docker compose -f observability/docker-compose.yml up -d
 docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
 ```
 
-That overlay attaches the `app` service to this stack's network and sets `OTEL_EXPORTER_OTLP_ENDPOINT` — see `../backend/app/telemetry.py` for what the backend exports today (HTTP request and SQL query traces). It's opt-in and touches nothing else: plain `docker compose up` (CI, `make test-integration`, deploy) is unaffected.
+That overlay attaches the `app` service to this stack's network and sets `OTEL_EXPORTER_OTLP_ENDPOINT` — see `../backend/app/telemetry.py` for what the backend exports today (HTTP request and SQL query traces, four application metrics, and application logs). It's opt-in and touches nothing else: plain `docker compose up` (CI, `make test-integration`, deploy) is unaffected.
 
 ## Currently wired vs. not
 
 - **Traces**: flowing once the app is connected — see above.
 - **Metrics**: flowing once the app is connected. The collector's own internal metrics are always scraped; the app additionally exports four counters (see `backend/app/telemetry.py`) — `canvas_connect.interview_rooms.created`, `canvas_connect.interview_participants.active`, `canvas_connect.canvas_elements.created`, `canvas_connect.component_creation.failures` — each joinable in PromQL against `target_info{exported_job="canvas-connect-backend"}` for `deployment_environment_name`/`service_version`. The provisioned dashboard already does this join — see below.
-- **Logs**: the pipeline (collector → Loki) is ready, but the app doesn't ship logs via OTLP yet — nothing will show up in Loki until that's added.
+- **Logs**: flowing once the app is connected. The `canvas_connect` logger (`backend/app/telemetry.py`) ships every record via OTLP in addition to stdout, trace-correlated automatically (`trace_id`/`span_id` on any record emitted inside a request span). See `app/store.py`/`app/routers/canvas.py` for what's logged today — room/participant/canvas-element lifecycle events and the same failures the metrics above count.
 
 ## Dashboard
 
-`grafana/provisioning/dashboards/json/canvas-connect-app-metrics.json` — one panel per application metric, plus a breakdown of failures by `reason`. Two dashboard variables at the top, **environment** and **version**, filter every panel; `version`'s options narrow to whatever's actually running in the selected `environment`.
+`grafana/provisioning/dashboards/json/canvas-connect-app-metrics.json` — one panel per application metric, a breakdown of failures by `reason`, and a live log panel. Two dashboard variables at the top, **environment** and **version**, filter every panel; `version`'s options narrow to whatever's actually running in the selected `environment`.
 
-Why the queries look the way they do: none of the four app metrics carry `deployment_environment_name`/`service_version` as labels directly — those live only on the synthetic `target_info` series each OTel resource produces. Every panel query is a `metric * on(exported_job, exported_instance) group_left(deployment_environment_name, service_version) target_info{...}` join to pull them in and filter by the variables (the `exported_` prefix is Prometheus's own doing: it renames the collector's `job`/`instance` labels on scrape since they'd otherwise collide with the scrape target's own). This is the standard OTel Collector → Prometheus pattern, and keeps per-process attributes (like `service.instance.id`) off the app metrics themselves rather than exploding their cardinality.
+Why the queries look the way they do: none of the four app metrics carry `deployment_environment_name`/`service_version` as labels directly — those live only on the synthetic `target_info` series each OTel resource produces. Every metric panel query is a `metric * on(exported_job, exported_instance) group_left(deployment_environment_name, service_version) target_info{...}` join to pull them in and filter by the variables (the `exported_` prefix is Prometheus's own doing: it renames the collector's `job`/`instance` labels on scrape since they'd otherwise collide with the scrape target's own). This is the standard OTel Collector → Prometheus pattern, and keeps per-process attributes (like `service.instance.id`) off the app metrics themselves rather than exploding their cardinality.
+
+The logs panel's query looks different — `{service_name="canvas-connect-backend"} | deployment_environment_name=~"$environment" | service_version=~"$version"` — because Loki's OTLP ingestion only promotes a small hint set (like `service_name`) to real indexed stream labels; everything else (`deployment_environment_name`, `service_version`, `trace_id`, `session_id`, ...) arrives as structured metadata, which can only be filtered with a label-filter pipeline stage (`| label=~"value"`) after the stream selector, not inside `{...}`.
 
 ## Notes
 
