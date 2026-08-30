@@ -3,3 +3,9 @@
 # GRAFANA_ADMIN_PASSWORD, ...).
 .env
 observability/.env
+
+# on-call-engineer/poll.sh's runtime state and generated incident
+# reports — local to whoever/wherever it's running, not repo content.
+on-call-engineer/.state.json
+on-call-engineer/incidents/*
+!on-call-engineer/incidents/.gitkeep
