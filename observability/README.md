@@ -34,7 +34,7 @@ That overlay attaches the `app` service to this stack's network and sets `OTEL_E
 ## Currently wired vs. not
 
 - **Traces**: flowing once the app is connected — see above.
-- **Metrics**: the collector's own internal metrics are scraped by default; the app doesn't emit any OTLP metrics yet, so Prometheus has nothing app-specific to show until that's added.
+- **Metrics**: flowing once the app is connected. The collector's own internal metrics are always scraped; the app additionally exports four counters (see `backend/app/telemetry.py`) — `canvas_connect.interview_rooms.created`, `canvas_connect.interview_participants.active`, `canvas_connect.canvas_elements.created`, `canvas_connect.component_creation.failures` — each joinable in PromQL against `target_info{service_name="canvas-connect-backend"}` for `deployment_environment_name`/`service_version`.
 - **Logs**: the pipeline (collector → Loki) is ready, but the app doesn't ship logs via OTLP yet — nothing will show up in Loki until that's added.
 
 ## Notes

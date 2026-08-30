@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from .auth import TOKEN_TTL, TokenRecord, hash_password, new_token, now
 from .db import CanvasDocumentRow, GuestLinkRow, ParticipantRow, SessionRow, TokenRow, UserRow
 from .errors import ApiError
+from .telemetry import active_interview_participants, canvas_elements_created, interview_rooms_created
 from .models import (
     BoxElement,
     ConnectorElement,
@@ -291,6 +292,8 @@ class Store:
             )
         )
         self.session.commit()
+        interview_rooms_created.add(1)
+        active_interview_participants.add(1)
         return _session_model(row)
 
     def update_session(self, session: InterviewSession, patch: dict) -> InterviewSession:
@@ -376,6 +379,8 @@ class Store:
             )
         )
         self.session.commit()
+        interview_rooms_created.add(1)
+        active_interview_participants.add(1)
         return _session_model(new_row)
 
     def remove_participant(self, session: InterviewSession, participant_id: str) -> None:
@@ -386,6 +391,7 @@ class Store:
         session_row = self.session.get(SessionRow, session.id)
         session_row.updated_at = now()
         self.session.commit()
+        active_interview_participants.add(-1)
 
     # ------------------------- permission checks -------------------------
     # Pure functions over the already-loaded Pydantic model — no DB access.
@@ -488,6 +494,7 @@ class Store:
         link_row.use_count += 1
 
         self.session.commit()
+        active_interview_participants.add(1)
         return _participant_model(participant_row), _session_model(session_row)
 
     # ------------------------------ canvas ------------------------------
@@ -510,6 +517,13 @@ class Store:
         row = self._get_canvas_row(session.id)
         ts = now()
         elements = _elements_json(document)
+        # The frontend PUTs the whole document on every save (see
+        # canvas.py) rather than incremental per-element operations, so an
+        # element is "created" here iff its id wasn't present in the
+        # previously-stored document.
+        old_ids = {e["id"] for e in row.elements} if row is not None and row.elements else set()
+        new_ids = {e["id"] for e in elements}
+        created_count = len(new_ids - old_ids)
         if row is None:
             row = CanvasDocumentRow(
                 id=document.id or _id("doc"), session_id=session.id, schema_version=document.schema_version,
@@ -524,6 +538,8 @@ class Store:
         session_row = self.session.get(SessionRow, session.id)
         session_row.updated_at = ts
         self.session.commit()
+        if created_count:
+            canvas_elements_created.add(created_count)
         return _canvas_model(row)
 
     # ------------------------------- seed -------------------------------

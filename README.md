@@ -117,6 +117,15 @@ The backend is instrumented with [OpenTelemetry](https://opentelemetry.io/) (`ba
 
 Traces are always created but only exported when `OTEL_EXPORTER_OTLP_ENDPOINT` is set (OTLP/HTTP), so local dev and the test suite don't spend every request retrying a connection to a collector that isn't running. Point it at any OTLP-compatible collector to start seeing traces.
 
+The same resource attributes tag four application metrics, all defined in `backend/app/telemetry.py` and recorded at the point in `app/store.py`/`app/routers/canvas.py` that each one actually happens:
+
+| Metric | Kind | Recorded when |
+| --- | --- | --- |
+| `canvas_connect.interview_rooms.created` | counter | a session is created or duplicated |
+| `canvas_connect.interview_participants.active` | up/down counter | a participant joins/is added, or is removed |
+| `canvas_connect.canvas_elements.created` | counter | a canvas save introduces element ids not seen before |
+| `canvas_connect.component_creation.failures` | counter | a canvas save is rejected (forbidden role, disabled editing) or errors, tagged with `reason` |
+
 A local collector plus a place to view what it collects is included: [`observability/`](observability/) runs OpenTelemetry Collector + Prometheus + Loki + Tempo + Grafana as its own Compose project — see [`observability/README.md`](observability/README.md) for how to run it and connect the app stack to it.
 
 ## Deployment
