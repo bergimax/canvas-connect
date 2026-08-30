@@ -1,0 +1,171 @@
+{
+  "uid": "canvas-connect-app-metrics",
+  "title": "Canvas Connect - Application Metrics",
+  "tags": ["canvas-connect"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-24h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "environment",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": {
+          "qryType": 1,
+          "query": "label_values(target_info{exported_job=\"canvas-connect-backend\"}, deployment_environment_name)",
+          "refId": "environment"
+        },
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "sort": 1
+      },
+      {
+        "name": "version",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": {
+          "qryType": 1,
+          "query": "label_values(target_info{exported_job=\"canvas-connect-backend\", deployment_environment_name=~\"$environment\"}, service_version)",
+          "refId": "version"
+        },
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "sort": 1
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Interview Rooms Created",
+      "description": "Sessions created or duplicated, in the selected time range, filtered by $environment / $version.",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "decimals": 0, "color": { "mode": "thresholds" } },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "area",
+        "colorMode": "value",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(\n  increase(canvas_connect_interview_rooms_created_total[$__range])\n  * on(exported_job, exported_instance) group_left(deployment_environment_name, service_version)\n  target_info{deployment_environment_name=~\"$environment\", service_version=~\"$version\"}\n)",
+          "legendFormat": "Rooms created"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Active Interview Participants",
+      "description": "Participants currently part of a session right now, filtered by $environment / $version.",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 6, "x": 6, "y": 0 },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "decimals": 0, "color": { "mode": "thresholds" } },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "area",
+        "colorMode": "value",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(\n  canvas_connect_interview_participants_active\n  * on(exported_job, exported_instance) group_left(deployment_environment_name, service_version)\n  target_info{deployment_environment_name=~\"$environment\", service_version=~\"$version\"}\n)",
+          "legendFormat": "Active participants"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Canvas Elements Created",
+      "description": "New element ids introduced by canvas saves, in the selected time range, filtered by $environment / $version.",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "decimals": 0, "color": { "mode": "thresholds" } },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "area",
+        "colorMode": "value",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(\n  increase(canvas_connect_canvas_elements_created_total[$__range])\n  * on(exported_job, exported_instance) group_left(deployment_environment_name, service_version)\n  target_info{deployment_environment_name=~\"$environment\", service_version=~\"$version\"}\n)",
+          "legendFormat": "Elements created"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Component Creation Failures",
+      "description": "Rejected/errored canvas saves per second, in the selected time range, broken down by reason and filtered by $environment / $version.",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "area",
+        "colorMode": "value",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(\n  increase(canvas_connect_component_creation_failures_total[$__range])\n  * on(exported_job, exported_instance) group_left(deployment_environment_name, service_version)\n  target_info{deployment_environment_name=~\"$environment\", service_version=~\"$version\"}\n)",
+          "legendFormat": "Failures"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Component Creation Failures by Reason",
+      "description": "Same failures as above, broken down over time by the 'reason' attribute, filtered by $environment / $version.",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 8 },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "custom": { "drawStyle": "line", "fillOpacity": 15, "spanNulls": false } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] } },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (reason) (\n  rate(canvas_connect_component_creation_failures_total[$__rate_interval])\n  * on(exported_job, exported_instance) group_left(deployment_environment_name, service_version)\n  target_info{deployment_environment_name=~\"$environment\", service_version=~\"$version\"}\n)",
+          "legendFormat": "{{reason}}"
+        }
+      ]
+    }
+  ]
+}

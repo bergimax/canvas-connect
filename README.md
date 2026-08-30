@@ -126,7 +126,7 @@ The same resource attributes tag four application metrics, all defined in `backe
 | `canvas_connect.canvas_elements.created` | counter | a canvas save introduces element ids not seen before |
 | `canvas_connect.component_creation.failures` | counter | a canvas save is rejected (forbidden role, disabled editing) or errors, tagged with `reason` |
 
-A local collector plus a place to view what it collects is included: [`observability/`](observability/) runs OpenTelemetry Collector + Prometheus + Loki + Tempo + Grafana as its own Compose project — see [`observability/README.md`](observability/README.md) for how to run it and connect the app stack to it.
+A local collector plus a place to view what it collects is included: [`observability/`](observability/) runs OpenTelemetry Collector + Prometheus + Loki + Tempo + Grafana as its own Compose project, with a pre-provisioned Grafana dashboard for the four metrics above, filterable by environment and version — see [`observability/README.md`](observability/README.md) for how to run it and connect the app stack to it.
 
 ## Deployment
 
