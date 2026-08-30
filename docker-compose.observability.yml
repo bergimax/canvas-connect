@@ -1,0 +1,21 @@
+# Optional third overlay that connects the app stack (docker-compose.yml)
+# to the independently-run observability stack
+# (observability/docker-compose.yml) for local dev. Never used by CI,
+# deploy, or docker-compose.prod.yml — see observability/README.md.
+#
+# Usage (observability stack first, so its external network exists):
+#   docker compose -f observability/docker-compose.yml up -d
+#   docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
+services:
+  app:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      ENVIRONMENT: local
+    networks:
+      - default
+      - observability
+
+networks:
+  observability:
+    name: canvas-connect-observability
+    external: true

@@ -1,0 +1,72 @@
+# Standalone observability stack — OpenTelemetry Collector + Prometheus +
+# Loki + Tempo + Grafana. Deliberately a separate Compose project from the
+# application stack (../docker-compose.yml): its own lifecycle, its own
+# network, brought up/down independently.
+#
+# Start:    docker compose -f observability/docker-compose.yml up -d
+# Grafana:  http://localhost:3001 (login admin/admin, change on first login)
+#
+# On its own this stack has nothing feeding it. To point the app stack's
+# traces at the collector, see ../docker-compose.observability.yml.
+name: canvas-connect-observability
+
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.116.1
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    ports:
+      - "4317:4317" # OTLP gRPC
+      - "4318:4318" # OTLP HTTP
+    depends_on:
+      - tempo
+      - loki
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+
+  loki:
+    image: grafana/loki:3.2.1
+    command: ["-config.file=/etc/loki/loki-config.yaml"]
+    volumes:
+      - ./loki-config.yaml:/etc/loki/loki-config.yaml:ro
+      - loki-data:/loki
+    ports:
+      - "3100:3100"
+
+  tempo:
+    image: grafana/tempo:2.6.1
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    volumes:
+      - ./tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    ports:
+      - "3200:3200" # Query API, used by Grafana's Tempo datasource
+
+  grafana:
+    image: grafana/grafana:11.3.1
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+      - loki
+      - tempo
+
+volumes:
+  prometheus-data:
+  loki-data:
+  tempo-data:
+  grafana-data:
+
+networks:
+  default:
+    name: canvas-connect-observability

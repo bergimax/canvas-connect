@@ -115,7 +115,9 @@ The backend is instrumented with [OpenTelemetry](https://opentelemetry.io/) (`ba
 - `deployment.environment.name` — `local`/`dev`/`prod`, from `ENVIRONMENT`
 - `service.version` — the deployed image tag, from `APP_VERSION`
 
-Traces are always created but only exported when `OTEL_EXPORTER_OTLP_ENDPOINT` is set (OTLP/HTTP), so local dev and the test suite don't spend every request retrying a connection to a collector that isn't running. Point it at any OTLP-compatible collector (e.g. an [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/), Honeycomb, Grafana Tempo) to start seeing traces.
+Traces are always created but only exported when `OTEL_EXPORTER_OTLP_ENDPOINT` is set (OTLP/HTTP), so local dev and the test suite don't spend every request retrying a connection to a collector that isn't running. Point it at any OTLP-compatible collector to start seeing traces.
+
+A local collector plus a place to view what it collects is included: [`observability/`](observability/) runs OpenTelemetry Collector + Prometheus + Loki + Tempo + Grafana as its own Compose project — see [`observability/README.md`](observability/README.md) for how to run it and connect the app stack to it.
 
 ## Deployment
 

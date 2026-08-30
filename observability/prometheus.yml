@@ -1,0 +1,17 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # Metrics the collector forwarded from the app (its "prometheus" exporter).
+  - job_name: otel-collector
+    static_configs:
+      - targets: ["otel-collector:8889"]
+
+  # The collector's own internal health/throughput metrics.
+  - job_name: otel-collector-internal
+    static_configs:
+      - targets: ["otel-collector:8888"]
