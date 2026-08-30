@@ -196,7 +196,7 @@ Resources:
           ecr_uri="${!account_id}.dkr.ecr.${!region}.amazonaws.com/canvas-connect-${Environment}"
           aws ecr get-login-password --region "${!region}" | docker login --username AWS --password-stdin "${!ecr_uri%/*}"
           if docker pull "${!ecr_uri}:latest"; then
-            APP_IMAGE="${!ecr_uri}:latest" docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+            APP_IMAGE="${!ecr_uri}:latest" ENVIRONMENT="${Environment}" APP_VERSION="latest" docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
           else
             echo "No 'latest' image in canvas-connect-${Environment} yet — app will start once the build stage pushes one and a deploy runs." >&2
           fi

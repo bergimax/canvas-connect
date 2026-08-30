@@ -15,6 +15,12 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://canvas_connect:${DB_PASSWORD}@db:5432/canvas_connect
       FRONTEND_BASE_URL: ${FRONTEND_BASE_URL}
+      # Set by whatever runs `docker compose ... up -d` here (deploy/deploy.sh,
+      # and the first-boot bootstrap in deploy/cloudformation.yml) so traces
+      # are tagged with the real stack/build instead of the "local" dev
+      # default in docker-compose.yml. See app/telemetry.py.
+      ENVIRONMENT: ${ENVIRONMENT}
+      APP_VERSION: ${APP_VERSION}
     restart: unless-stopped
 
   caddy:

@@ -13,6 +13,7 @@ Full product specification: [docs/specs.md](docs/specs.md).
 - [Quickstart](#quickstart)
 - [Testing](#testing)
 - [Configuration](#configuration)
+- [Observability](#observability)
 - [Deployment](#deployment)
 - [Architecture](#architecture)
 - [Project structure](#project-structure)
@@ -97,10 +98,24 @@ The app runs with zero configuration out of the box (SQLite file, mock auth seed
 | `DATABASE_URL` | backend | `sqlite:///./canvas_connect.db` | Any SQLAlchemy URL; `docker-compose.yml` sets it to the Postgres container |
 | `FRONTEND_BASE_URL` | backend | `http://localhost:8080` | Origin used when building candidate guest-link URLs |
 | `APP_IMAGE` | `docker-compose.yml` | `canvas-connect:local` | Overridden by the deploy pipeline to run the exact image CI built and tested, instead of rebuilding — see [CI/CD](#cicd) |
+| `ENVIRONMENT` | backend | `local` | Tags every OpenTelemetry span (`deployment.environment.name`); set to `dev`/`prod` by the deploy pipeline — see [Observability](#observability) |
+| `APP_VERSION` | backend | `dev` | Tags every span (`service.version`) with the deployed image tag; set by `deploy/deploy.sh` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | backend | unset | Where traces are exported (OTLP/HTTP); traces are created but not exported if unset — see [Observability](#observability) |
+| `OTEL_SERVICE_NAME` | backend | `canvas-connect-backend` | Overrides the `service.name` span attribute |
 | `VITE_API_BASE_URL` | frontend (dev only) | unset | Points the Vite dev server at a backend; unset means same-origin |
 | `VITE_USE_MOCK_API` | frontend (dev only) | `true` unless a base URL is set | Forces the in-memory mock backend (`frontend/src/lib/mock-backend.ts`) on or off |
 
 `docker-compose.prod.yml` (the production override, see [Deployment](#deployment)) additionally reads `DB_PASSWORD`, `SITE_ADDRESS`, and `FRONTEND_BASE_URL` from a `.env` file next to it — all required, none have defaults, since it's meant to run on a real host, not a laptop. Copy [`.env.example`](.env.example) to `.env` and fill it in; not needed for the plain `docker-compose.yml` quickstart above.
+
+## Observability
+
+The backend is instrumented with [OpenTelemetry](https://opentelemetry.io/) (`backend/app/telemetry.py`): every request (FastAPI) and database query (SQLAlchemy) produces a trace, tagged with three resource attributes so a trace backend can filter/group by exactly what's running —
+
+- `service.name` — `canvas-connect-backend` (override with `OTEL_SERVICE_NAME`)
+- `deployment.environment.name` — `local`/`dev`/`prod`, from `ENVIRONMENT`
+- `service.version` — the deployed image tag, from `APP_VERSION`
+
+Traces are always created but only exported when `OTEL_EXPORTER_OTLP_ENDPOINT` is set (OTLP/HTTP), so local dev and the test suite don't spend every request retrying a connection to a collector that isn't running. Point it at any OTLP-compatible collector (e.g. an [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/), Honeycomb, Grafana Tempo) to start seeing traces.
 
 ## Deployment
 

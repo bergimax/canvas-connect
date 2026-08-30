@@ -81,7 +81,7 @@ deploy_tag() {
     "git checkout origin/main -- docker-compose.yml docker-compose.prod.yml deploy/Caddyfile" \
     "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}" \
     "docker pull ${ECR_URI}:${tag}" \
-    "APP_IMAGE=${ECR_URI}:${tag} docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d"
+    "APP_IMAGE=${ECR_URI}:${tag} ENVIRONMENT=${ENVIRONMENT} APP_VERSION=${tag} docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d"
 }
 
 health_check() {

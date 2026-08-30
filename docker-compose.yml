@@ -29,6 +29,9 @@ services:
       # Dockerfile/docker-entrypoint.sh) — without this, guest links default
       # to http://localhost:8080, a port nothing is listening on here.
       FRONTEND_BASE_URL: http://localhost:8000
+      # Overridden to dev/prod by docker-compose.prod.yml; local/CI runs
+      # stay "local" here. See app/telemetry.py.
+      ENVIRONMENT: local
     depends_on:
       db:
         condition: service_healthy

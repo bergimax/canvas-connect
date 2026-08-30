@@ -8,6 +8,7 @@ from .errors import register_exception_handlers
 from .frontend_proxy import register_frontend_proxy
 from .routers import auth, canvas, guest_links, health, join, participants, sessions
 from .store import Store
+from .telemetry import instrument
 
 
 def create_app(database_url: str | None = None) -> FastAPI:
@@ -19,6 +20,8 @@ def create_app(database_url: str | None = None) -> FastAPI:
     engine = get_engine(database_url)
     session_factory = create_session_factory(engine)
     app.state.store = Store(session_factory())
+
+    instrument(app, engine)
 
     register_exception_handlers(app)
 
