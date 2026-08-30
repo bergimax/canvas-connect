@@ -1,0 +1,5 @@
+# Real values for docker-compose.prod.yml overrides — see .env.example
+# and observability/.env.example. Never commit secrets (DB_PASSWORD,
+# GRAFANA_ADMIN_PASSWORD, ...).
+.env
+observability/.env

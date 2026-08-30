@@ -1,0 +1,48 @@
+# Production override, layered on top of docker-compose.yml — same pattern
+# as ../docker-compose.prod.yml for the app:
+#   docker compose -f observability/docker-compose.yml -f observability/docker-compose.prod.yml up -d
+#
+# Adds Caddy as the public entry point (TLS via Let's Encrypt once
+# SITE_ADDRESS is set to a real domain; plain HTTP on :80 until then) and
+# sets a real Grafana admin password instead of the docker-compose.yml
+# dev default (admin/admin). Injects both from a .env file next to it —
+# see deploy/observability-cloudformation.yml, which writes .env at boot.
+services:
+  otel-collector:
+    restart: unless-stopped
+
+  prometheus:
+    restart: unless-stopped
+
+  loki:
+    restart: unless-stopped
+
+  tempo:
+    restart: unless-stopped
+
+  grafana:
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - grafana
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      # ":-" (not "-") so an empty SITE_ADDRESS falls back to ":80" too,
+      # not just an unset one — see ../docker-compose.prod.yml's identical
+      # comment for why.
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  caddy-data:
+  caddy-config:

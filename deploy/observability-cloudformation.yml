@@ -1,0 +1,228 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Canvas Connect - single EC2 instance running the observability stack
+  (OpenTelemetry Collector, Prometheus, Loki, Tempo, Grafana) via Docker
+  Compose — see ../observability/README.md. Deliberately a separate,
+  independent stack from deploy/cloudformation.yml's dev/prod app
+  stacks: its own EC2 instance, its own security group, its own Elastic
+  IP. There is exactly one of these (not one per app environment) — both
+  the dev and prod app stacks point at it (see
+  cloudformation.yml's ObservabilityOtlpEndpoint parameter).
+
+  Unlike the app stack, this instance never pulls from our own ECR — the
+  images here are public, pinned tags already versioned in git (see
+  observability/docker-compose.yml), so a deploy is just "pull that git
+  config + those pinned tags and restart" (deploy/deploy-observability.sh),
+  not an image build/promote pipeline. Access is via SSM Session Manager
+  only (no SSH port open), same as the app stack.
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC to deploy into.
+
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Public subnet (must route to an Internet Gateway) in the chosen VPC.
+
+  InstanceType:
+    Type: String
+    Default: t3.medium
+    AllowedValues: [t3.medium, t3.large, t3.xlarge]
+    Description: >
+      t3.medium (4GB RAM) - five services (collector, Prometheus, Loki,
+      Tempo, Grafana) need more headroom than the app's own single-service
+      t3.small.
+
+  GrafanaAdminPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+    Description: >
+      Grafana admin password. NoEcho hides it from the CFN console/CLI
+      output, but note it is still readable in plaintext EC2 instance
+      UserData by anyone with ec2:DescribeInstanceAttribute on this
+      instance, and by root on the box itself - acceptable for a single
+      personal instance, not for a multi-tenant account.
+
+  SiteAddress:
+    Type: String
+    Default: ""
+    Description: >
+      Public domain (e.g. grafana.example.com) once you have one, for
+      automatic HTTPS via Caddy/Let's Encrypt. Leave empty to serve plain
+      HTTP on the instance's IP for now.
+
+  DevInstanceIp:
+    Type: String
+    Default: ""
+    Description: >
+      Public IP of the dev app instance (deploy/cloudformation.yml's
+      PublicIp output, Environment=dev) - allow-lists it to reach this
+      instance's OTLP ports (4317/4318). Leave empty if the dev stack
+      doesn't exist yet or shouldn't send telemetry here; update this
+      stack once it does. Never opened to 0.0.0.0/0 - an unauthenticated
+      OTLP ingestion endpoint on the open internet is a real risk (cost,
+      and garbage data in your dashboards).
+
+  ProdInstanceIp:
+    Type: String
+    Default: ""
+    Description: Same as DevInstanceIp, for the prod app instance (Environment=prod).
+
+  GitRepoUrl:
+    Type: String
+    Default: https://github.com/bergimax/canvas-connect.git
+
+  GitRef:
+    Type: String
+    Default: main
+
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+
+Conditions:
+  HasDevIp: !Not [!Equals [!Ref DevInstanceIp, ""]]
+  HasProdIp: !Not [!Equals [!Ref ProdInstanceIp, ""]]
+
+Resources:
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref InstanceRole
+
+  InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Canvas Connect observability - HTTP/HTTPS (Grafana) in, no SSH (SSM only)"
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+
+  # OTLP ingress (gRPC 4317 + HTTP 4318 in one range), scoped to exactly
+  # the dev/prod app instances' /32s rather than the SG itself, so each
+  # can be added/removed independently as those stacks come and go.
+  DevOtlpIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: HasDevIp
+    Properties:
+      GroupId: !Ref InstanceSecurityGroup
+      IpProtocol: tcp
+      FromPort: 4317
+      ToPort: 4318
+      CidrIp: !Sub "${DevInstanceIp}/32"
+
+  ProdOtlpIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: HasProdIp
+    Properties:
+      GroupId: !Ref InstanceSecurityGroup
+      IpProtocol: tcp
+      FromPort: 4317
+      ToPort: 4318
+      CidrIp: !Sub "${ProdInstanceIp}/32"
+
+  Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref InstanceProfile
+      Tags:
+        - Key: Name
+          Value: canvas-connect-observability
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeType: gp3
+            VolumeSize: 40
+            DeleteOnTermination: true
+      NetworkInterfaces:
+        - DeviceIndex: 0
+          AssociatePublicIpAddress: true
+          SubnetId: !Ref SubnetId
+          GroupSet:
+            - !Ref InstanceSecurityGroup
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euxo pipefail
+
+          dnf update -y
+          dnf install -y docker git
+          systemctl enable --now docker
+
+          mkdir -p /usr/local/lib/docker/cli-plugins
+          curl -fsSL https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64 \
+            -o /usr/local/lib/docker/cli-plugins/docker-compose
+          chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+
+          mkdir -p /opt/observability
+          git clone --branch "${GitRef}" --depth 1 "${GitRepoUrl}" /opt/observability
+          cd /opt/observability
+
+          cat > observability/.env <<ENVEOF
+          GRAFANA_ADMIN_PASSWORD=${GrafanaAdminPassword}
+          SITE_ADDRESS=${SiteAddress}
+          ENVEOF
+
+          docker compose -f observability/docker-compose.yml -f observability/docker-compose.prod.yml up -d
+
+  ElasticIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  ElasticIPAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      InstanceId: !Ref Instance
+      AllocationId: !GetAtt ElasticIP.AllocationId
+
+Outputs:
+  PublicIp:
+    Description: >
+      Stable public IP of the instance. Feed this into
+      cloudformation.yml's ObservabilityOtlpEndpoint parameter
+      (http://<PublicIp>:4318) for the dev/prod app stacks, and into this
+      stack's own DevInstanceIp/ProdInstanceIp parameters (their own
+      PublicIp outputs) so they're allowed through the OTLP security
+      group rules above.
+    Value: !Ref ElasticIP
+
+  GrafanaUrl:
+    Description: >
+      Grafana URL. If you deployed with an empty SiteAddress, this is
+      http://<PublicIp>; once you have a domain, point an A record at
+      PublicIp, redeploy the stack with SiteAddress set, and Caddy will
+      switch to https://<SiteAddress> with an automatic Let's Encrypt cert.
+    Value: !Sub "http://${ElasticIP}"
+
+  SsmConnectCommand:
+    Description: Command to open a shell on the instance (no SSH key needed).
+    Value: !Sub "aws ssm start-session --target ${Instance}"

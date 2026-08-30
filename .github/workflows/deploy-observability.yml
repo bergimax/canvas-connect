@@ -1,0 +1,90 @@
+name: Deploy Observability Stack
+
+# The observability stack (observability/) is a separate Compose project
+# from the app, deployed to its own EC2 instance
+# (deploy/observability-cloudformation.yml) — see observability/README.md.
+# There's exactly one of these, not one per app environment: both dev and
+# prod point their OTEL_EXPORTER_OTLP_ENDPOINT at this same instance (see
+# deploy/cloudformation.yml's ObservabilityOtlpEndpoint parameter).
+#
+# Runs on every push to main that touches observability config, plus
+# manual dispatch. Unlike the app (.github/workflows/ci-cd.yml), there's
+# no build stage and no dev/prod split here — the images are public,
+# pinned tags (see observability/docker-compose.yml), so "deploy" just
+# means "pull the latest git config + those pinned tags and restart"
+# (deploy/deploy-observability.sh).
+#
+# AWS isn't provisioned yet, so this no-ops cleanly instead of failing
+# until the required "observability" GitHub Environment secrets/variables
+# exist:
+#   Secrets:
+#     AWS_ROLE_ARN        - IAM role ARN GitHub OIDC assumes (see below)
+#   Variables:
+#     AWS_REGION           - e.g. eu-west-1
+#     DEPLOY_HEALTH_URL     - Grafana's health endpoint, e.g.
+#                             http://<observability-elastic-ip>/api/health
+#                             — without it the deploy is unverified
+#
+# Once deploy/observability-cloudformation.yml has been deployed and
+# those are set on an "observability" GitHub Environment, this job starts
+# deploying for real with no further changes needed. Consider adding a
+# required reviewer on that Environment (repo Settings > Environments >
+# observability > Required reviewers), same as the "production" one.
+#
+# The IAM role trust policy should scope the OIDC subject to this repo,
+# e.g.:
+#   repo:<org>/<repo>:ref:refs/heads/main
+# and the role needs permission for:
+#   ec2:DescribeInstances, ssm:SendCommand, ssm:GetCommandInvocation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "observability/**"
+      - "deploy/observability-cloudformation.yml"
+      - "deploy/deploy-observability.sh"
+      - ".github/workflows/deploy-observability.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-observability
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-observability:
+    name: Deploy observability stack
+    runs-on: ubuntu-latest
+    environment: observability
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check AWS deploy is configured
+        id: aws_ready
+        run: |
+          if [ -z "${{ secrets.AWS_ROLE_ARN }}" ] || [ -z "${{ vars.AWS_REGION }}" ]; then
+            echo "::notice::AWS_ROLE_ARN secret and/or AWS_REGION variable not set — AWS isn't provisioned yet, skipping deploy."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure AWS credentials (OIDC)
+        if: steps.aws_ready.outputs.ready == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Deploy and health-check
+        if: steps.aws_ready.outputs.ready == 'true'
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          DEPLOY_HEALTH_URL: ${{ vars.DEPLOY_HEALTH_URL }}
+        run: bash deploy/deploy-observability.sh

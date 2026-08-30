@@ -21,6 +21,11 @@ services:
       # default in docker-compose.yml. See app/telemetry.py.
       ENVIRONMENT: ${ENVIRONMENT}
       APP_VERSION: ${APP_VERSION}
+      # The shared observability stack's collector (deploy/observability-
+      # cloudformation.yml) — from .env, since it changes rarely and isn't
+      # tied to a specific deploy the way ENVIRONMENT/APP_VERSION are.
+      # Empty means no telemetry export, same as local dev.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     restart: unless-stopped
 
   caddy:
@@ -32,7 +37,12 @@ services:
       - "80:80"
       - "443:443"
     environment:
-      SITE_ADDRESS: ${SITE_ADDRESS}
+      # ":-" (not "-") so an empty SITE_ADDRESS (the normal "no domain yet"
+      # case — see .env.example) falls back to ":80" too, not just an
+      # unset one: Caddy's own {$VAR:default} syntax only applies its
+      # default when the env var is truly unset, and Compose always sets
+      # it (to "") once it's referenced in this block at all.
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data

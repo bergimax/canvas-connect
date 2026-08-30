@@ -57,6 +57,18 @@ Parameters:
       HTTPS via Caddy/Let's Encrypt. Leave empty to serve plain HTTP on the
       instance's IP for now.
 
+  ObservabilityOtlpEndpoint:
+    Type: String
+    Default: ""
+    Description: >
+      OTLP/HTTP endpoint of the shared observability stack's collector
+      (observability-cloudformation.yml's PublicIp output, e.g.
+      http://<observability-elastic-ip>:4318). Leave empty to run with no
+      telemetry export configured, same as local dev - see
+      backend/app/telemetry.py. There's one observability stack shared by
+      both dev and prod, not one per environment, so this is typically
+      the same value on both.
+
   GitRepoUrl:
     Type: String
     Default: https://github.com/bergimax/canvas-connect.git
@@ -181,6 +193,7 @@ Resources:
           DB_PASSWORD=${DBPassword}
           SITE_ADDRESS=${!site_address}
           FRONTEND_BASE_URL=${!frontend_base_url}
+          OTEL_EXPORTER_OTLP_ENDPOINT=${ObservabilityOtlpEndpoint}
           ENVEOF
 
           # Pull-only, same as deploy/deploy.sh — never build here. Only the

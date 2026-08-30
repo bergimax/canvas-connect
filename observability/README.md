@@ -45,6 +45,10 @@ Why the queries look the way they do: none of the four app metrics carry `deploy
 
 The logs panel's query looks different — `{service_name="canvas-connect-backend"} | deployment_environment_name=~"$environment" | service_version=~"$version"` — because Loki's OTLP ingestion only promotes a small hint set (like `service_name`) to real indexed stream labels; everything else (`deployment_environment_name`, `service_version`, `trace_id`, `session_id`, ...) arrives as structured metadata, which can only be filtered with a label-filter pipeline stage (`| label=~"value"`) after the stream selector, not inside `{...}`.
 
+## Production deployment
+
+Deployed as its own EC2 instance/CloudFormation stack — separate from the dev and prod app instances, not one-per-environment — via [`deploy/observability-cloudformation.yml`](../deploy/observability-cloudformation.yml) and [`deploy/deploy-observability.sh`](../deploy/deploy-observability.sh). `docker-compose.prod.yml` here adds Caddy in front of Grafana (same automatic-HTTPS pattern as the app's) and a real Grafana admin password instead of the `docker-compose.yml` dev default. See the [main README's Deployment section](../README.md#observability-stack) for the full picture, including how the dev/prod app stacks get pointed at this one and how its security group is scoped to their specific IPs rather than the open internet.
+
 ## Notes
 
 - Data is only as durable as the named Docker volumes (`prometheus-data`, `loki-data`, `tempo-data`, `grafana-data`) — `docker compose -f observability/docker-compose.yml down -v` wipes it.
