@@ -1,0 +1,89 @@
+# Repeated canvas component-creation failures — see ../../README.md#alerting
+# for the reasoning behind the threshold and "for" duration below, and
+# ../../../backend/app/routers/canvas.py for where
+# component_creation_failures is recorded.
+#
+# Scoped to reason="error" only: "observer_forbidden" and
+# "editing_disabled" are the server correctly enforcing permissions
+# (expected, by-design rejections, not incidents — alerting on those
+# would just be UX-friction noise, not something anyone's on call for).
+# "error" is the one reason that means a save actually broke — a bug or
+# an infra problem someone can and should investigate. That's what
+# "actionable" means here.
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: canvas-connect
+    folder: Canvas Connect
+    interval: 1m
+    rules:
+      - uid: component-creation-failures
+        title: Repeated canvas component-creation failures
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              editorMode: code
+              expr: |
+                sum by (deployment_environment_name, service_version) (
+                  increase(canvas_connect_component_creation_failures_total{reason="error"}[5m])
+                  * on(exported_job, exported_instance) group_left(deployment_environment_name, service_version)
+                  target_info{exported_job="canvas-connect-backend"}
+                )
+              instant: true
+              range: false
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [2]
+              refId: B
+        # One evaluation tick (1m) isn't enough on its own — a single
+        # borderline reading could flap the alert. Two minutes needs two
+        # consecutive true evaluations, cheap insurance against a false
+        # positive without meaningfully delaying detection: this is a
+        # live-in-progress-interview product, so slow detection has a
+        # real cost too, not just noisy alerts.
+        for: 2m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+          service: canvas-connect-backend
+          owner: massimo.bergi@gmail.com
+        annotations:
+          # $labels here is populated from refId A's query result only — the
+          # rule's own static labels (service/owner/severity) below aren't
+          # visible to this template, so those two are written literally
+          # rather than as {{ $labels.service }} / {{ $labels.owner }},
+          # which render as "[no value]". They're still real labels on the
+          # fired alert instance (for routing/silencing), just not
+          # interpolated into this text.
+          summary: >-
+            canvas-connect-backend ({{ $labels.deployment_environment_name }},
+            version {{ $labels.service_version }}) had {{ $values.A.Value }}
+            canvas save failures (reason=error) in the last 5 minutes —
+            owner: massimo.bergi@gmail.com.
+          description: >-
+            Users are hitting unexpected errors while trying to save their
+            canvas — not the expected observer/candidate-editing-disabled
+            rejections, an actual bug or infra problem. This interview
+            product is live and time-sensitive for whoever's affected
+            right now, so this is worth checking immediately: start with
+            the "Backend Logs" panel below (filtered to this environment
+            already) and app/routers/canvas.py's save_canvas / app/store.py's
+            save_canvas.
+          dashboard_url: >-
+            /d/canvas-connect-app-metrics/canvas-connect-application-metrics?var-environment={{ $labels.deployment_environment_name }}&var-version={{ $labels.service_version }}
+          __dashboardUid__: canvas-connect-app-metrics
+          __panelId__: "5"

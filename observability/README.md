@@ -45,6 +45,21 @@ Why the queries look the way they do: none of the four app metrics carry `deploy
 
 The logs panel's query looks different — `{service_name="canvas-connect-backend"} | deployment_environment_name=~"$environment" | service_version=~"$version"` — because Loki's OTLP ingestion only promotes a small hint set (like `service_name`) to real indexed stream labels; everything else (`deployment_environment_name`, `service_version`, `trace_id`, `session_id`, ...) arrives as structured metadata, which can only be filtered with a label-filter pipeline stage (`| label=~"value"`) after the stream selector, not inside `{...}`.
 
+## Alerting
+
+`grafana/provisioning/alerting/component-creation-failures.yml` — one alert, "Repeated canvas component-creation failures", firing per `(environment, version)` combination independently (so a broken dev deploy never masks, or gets masked by, prod).
+
+**Scope**: only `reason="error"` — the query filters `canvas_connect_component_creation_failures_total{reason="error"}`, deliberately excluding `observer_forbidden` and `editing_disabled`. Those two are the server correctly enforcing permissions (expected, by-design rejections), not incidents; alerting on them would be UX-friction noise, not something actionable for whoever's on call. `error` is the one reason that means a save actually broke.
+
+**Threshold and duration**: more than 2 failures (`> 2`, i.e. 3+) within a trailing 5-minute window (`increase(...[5m])`), sustained for 2 minutes (`for: 2m`) before firing. The reasoning:
+- This is a real-time collaborative tool for an **interview in progress** — a handful of failures in 5 minutes, given how low the overall traffic is, is already a strong signal, and someone is stuck *right now*. That argues for a sensitive, fast-firing alert, not a lax one.
+- "Repeated" (the ask) rules out firing on a single isolated blip — one failure could be a transient fluke; three within 5 minutes is a pattern.
+- The 2-minute `for` isn't about waiting out a long confirmation period — it's cheap insurance against a single borderline evaluation tick flapping the alert, while still detecting a real pattern within a few minutes total, appropriate for a product where slow detection has a real cost too.
+
+**What's in the alert**: labels `service` (`canvas-connect-backend`), `owner` (contact for this alert), `severity`; the query result contributes `deployment_environment_name` and `service_version` per firing instance. The `summary`/`description` annotations spell out service, environment, version, and owner in prose (Grafana's annotation templates only have `$labels` from the *query result*, not the rule's own static labels — that's why `service`/`owner` are written literally there rather than templated, even though they're still real labels on the alert). `dashboard_url` links to the app-metrics dashboard's failures-by-reason panel, deep-linked with `var-environment`/`var-version` set to the firing instance's own values; `__dashboardUid__`/`__panelId__` also wire up Grafana's native "View in Dashboard" button.
+
+No contact point/notification policy is provisioned (Grafana's default email contact point needs SMTP configured, which isn't set up here) — the rule fires and is visible in Grafana's Alerting UI with everything above attached; routing it to Slack/PagerDuty/email is a separate step once you have a real target.
+
 ## Production deployment
 
 Deployed as its own EC2 instance/CloudFormation stack — separate from the dev and prod app instances, not one-per-environment — via [`deploy/observability-cloudformation.yml`](../deploy/observability-cloudformation.yml) and [`deploy/deploy-observability.sh`](../deploy/deploy-observability.sh). `docker-compose.prod.yml` here adds Caddy in front of Grafana (same automatic-HTTPS pattern as the app's) and a real Grafana admin password instead of the `docker-compose.yml` dev default. See the [main README's Deployment section](../README.md#observability-stack) for the full picture, including how the dev/prod app stacks get pointed at this one and how its security group is scoped to their specific IPs rather than the open internet.
